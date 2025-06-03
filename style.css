@@ -1,0 +1,170 @@
+body {
+  line-height: 1.6;
+  font-size: 18px;
+  color: #444;
+  padding: 0;
+  margin: 0;
+  font-family: sans;
+}
+
+h1.centered {
+  margin: 40px auto;
+  text-align: center;
+  max-width: 900px;
+}
+
+.colu {
+  padding-left: 12px;
+  padding-right: 12px;
+  margin: 40px auto;
+  max-width: 624px;
+}
+
+.vidcolu {
+  padding-left: 12px;
+  padding-right: 12px;
+  margin: 40px auto;
+  max-width: 900px;
+}
+
+video {
+    width: 100%;
+    object-fit: cover;
+}
+
+.icon {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+}
+
+h2 {
+  padding-top: 1em;
+  line-height: 1.2;
+}
+
+p {
+  text-align: justify;
+}
+
+.shadow {
+    background: #eaeaea;
+    box-shadow: 0px 0px 20px black;
+    padding: 1em;
+}
+
+.shadow .colu {
+  margin: 0px auto;
+}
+
+.shadow h2 {
+    padding-top: 0px;
+}
+
+.viddesc {
+  text-align: center;
+  margin-top: 0px;
+}
+
+.mindesc {
+  color: #757575;
+  text-align: center;
+  margin-top: 0px;
+}
+
+p.centered {
+  text-align: center;
+}
+
+.audio-container {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.audio-container code {
+  margin: auto;
+}
+
+audio {
+  margin: 5px;
+}
+
+audio.long {
+  width: 100%;
+}
+
+@keyframes fadeIn {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+.fade-in {
+  animation: fadeIn 1.2s;
+}
+
+footer {
+    padding: 1px;
+    background: #eaeaea;
+    box-shadow: 0px 0px 20px black;
+}
+
+.twocol {
+    display: flex;
+}
+
+.twocol > div {
+    width: 50%;
+    padding: 12px;
+}
+
+img {
+    width: 100%;
+}
+
+pre {
+  font-size: 14px;
+    padding: 1em;
+    color: black;
+    background: #ccc;
+    text-wrap: auto;
+}
+
+.fours {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.fours-el {
+    max-width: 225px;
+}
+
+.links {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.links > div {
+    margin: 8px 12px;
+}
+
+.foot {
+    text-align: center;
+    font-size: 14px;
+}
+
+@media (max-width: 559px) {
+  .twocol {
+    flex-wrap: wrap;
+  }
+  .twocol > div {
+    width: 100%;
+    padding: 0px;
+  }
+}

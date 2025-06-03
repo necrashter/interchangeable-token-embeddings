@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Interchangeable Token Embeddings for Extendable Vocabulary and Alpha-Equivalence</title>
+    <meta name="description" content="Our novel approach for learning interchangeable tokens generalizes to larger vocabulary sizes as demonstrated in linear temporal logic.">
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" type="image/png" href="favicon.png" />
+</head>
+<body>
+    <h1 class="fade-in centered">Interchangeable Token Embeddings for Extendable Vocabulary and Alpha-Equivalence</h1>
+    <hgroup class="colu">
+        <p class="centered">
+        İlker Işık, Ramazan Gokberk Cinbis, Ebru Aydin Gol
+        </p>
+        <p class="centered">
+        <b>ICML 2025</b>
+        </p>
+        <div class="links">
+            <div>
+                <span class="icon">
+                    <svg class="svg-inline--fa fa-file-pdf fa-w-12" aria-hidden="true" focusable="false" data-prefix="fas" data-icon="file-pdf" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512" data-fa-i2svg=""><path fill="currentColor" d="M181.9 256.1c-5-16-4.9-46.9-2-46.9 8.4 0 7.6 36.9 2 46.9zm-1.7 47.2c-7.7 20.2-17.3 43.3-28.4 62.7 18.3-7 39-17.2 62.9-21.9-12.7-9.6-24.9-23.4-34.5-40.8zM86.1 428.1c0 .8 13.2-5.4 34.9-40.2-6.7 6.3-29.1 24.5-34.9 40.2zM248 160h136v328c0 13.3-10.7 24-24 24H24c-13.3 0-24-10.7-24-24V24C0 10.7 10.7 0 24 0h200v136c0 13.2 10.8 24 24 24zm-8 171.8c-20-12.2-33.3-29-42.7-53.8 4.5-18.5 11.6-46.6 6.2-64.2-4.7-29.4-42.4-26.5-47.8-6.8-5 18.3-.4 44.1 8.1 77-11.6 27.6-28.7 64.6-40.8 85.8-.1 0-.1.1-.2.1-27.1 13.9-73.6 44.5-54.5 68 5.6 6.9 16 10 21.5 10 17.9 0 35.7-18 61.1-61.8 25.8-8.5 54.1-19.1 79-23.2 21.7 11.8 47.1 19.5 64 19.5 29.2 0 31.2-32 19.7-43.4-13.9-13.6-54.3-9.7-73.6-7.2zM377 105L279 7c-4.5-4.5-10.6-7-17-7h-6v128h128v-6.1c0-6.3-2.5-12.4-7-16.9zm-74.1 255.3c4.1-2.7-2.5-11.9-42.8-9 37.1 15.8 42.8 9 42.8 9z"></path></svg><!-- <i class="fas fa-file-pdf"></i> Font Awesome fontawesome.com -->
+                </span>
+                <a href="https://arxiv.org/pdf/2410.17161">
+                    Paper
+                </a>
+            </div>
+            <div>
+                <span class="icon">
+                    <svg class="svg-inline--fa fa-github fa-w-16" aria-hidden="true" focusable="false" data-prefix="fab" data-icon="github" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512" data-fa-i2svg=""><path fill="currentColor" d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"></path></svg><!-- <i class="fab fa-github"></i> Font Awesome fontawesome.com -->
+                </span>
+                Code (Coming Soon)
+            </div>
+            <div>
+                <span class="icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 17.732 24.269"><g id="tiny"><path d="M573.549,280.916l2.266,2.738,6.674-7.84c.353-.47.52-.717.353-1.117a1.218,1.218,0,0,0-1.061-.748h0a.953.953,0,0,0-.712.262Z" transform="translate(-566.984 -271.548)" fill="#bdb9b4"/><path d="M579.525,282.225l-10.606-10.174a1.413,1.413,0,0,0-.834-.5,1.09,1.09,0,0,0-1.027.66c-.167.4-.047.681.319,1.206l8.44,10.242h0l-6.282,7.716a1.336,1.336,0,0,0-.323,1.3,1.114,1.114,0,0,0,1.04.69A.992.992,0,0,0,571,293l8.519-7.92A1.924,1.924,0,0,0,579.525,282.225Z" transform="translate(-566.984 -271.548)" fill="#b31b1b"/><path d="M584.32,293.912l-8.525-10.275,0,0L573.53,280.9l-1.389,1.254a2.063,2.063,0,0,0,0,2.965l10.812,10.419a.925.925,0,0,0,.742.282,1.039,1.039,0,0,0,.953-.667A1.261,1.261,0,0,0,584.32,293.912Z" transform="translate(-566.984 -271.548)" fill="#bdb9b4"/></g></svg>
+                </span>
+                <a href="https://arxiv.org/abs/2410.17161">
+                    arXiv
+                </a>
+            </div>
+        </div>
+    </hgroup>
+
+    <div class="vidcolu">
+        <video controls autoplay loop>
+            <source src="matrix.mp4" type="video/mp4">
+            Your browser does not support the video tag.
+        </video>
+        <p class="viddesc">For interchangeable tokens, our embedding matrix combines a common learnable part for weight sharing and a randomly generated part for distinguishability.</p>
+    </div>
+
+    <div class="shadow">
+        <div class="colu">
+            <h2>Abstract</h2>
+            <p>
+            We propose a novel approach for learning interchangeable tokens in language models to obtain an extendable vocabulary that can generalize to new tokens. Our method addresses alpha-equivalence, the principle that renaming bound variables preserves semantics. This property arises in many formal languages such as temporal logics, where all proposition symbols represent the same concept but remain distinct. To handle such tokens, we develop a dual-part embedding approach. The first part is shared across all interchangeable tokens, enforcing that they represent the same core concept. The second part is randomly generated for each token, enabling distinguishability. As a baseline, we consider a simpler approach that uses alpha-renaming for data augmentation. We also present alpha-covariance, a metric for measuring robustness against alpha-conversions. When evaluated in a Transformer encoder-decoder model for solving linear temporal logic formulae and copying with extendable vocabulary, our method demonstrates promising generalization capabilities as well as a favorable inductive bias for alpha-equivalence.
+            </p>
+        </div>
+    </div>
+
+    <div class="vidcolu">
+        <h2>Alpha-Equivalence</h2>
+        <video controls autoplay loop>
+            <source src="alphaeq.mp4" type="video/mp4">
+            Your browser does not support the video tag.
+        </video>
+        <p class="viddesc">
+        In many formal languages, variables can be renamed without changing the meaning. This transformation is called <i>alpha-renaming</i>, and the resulting formulas are <i>alpha-equivalent</i>.
+        Since all variables share the same underlying concept, we aim to train a model that can <b>generalize to larger variable vocabularies</b>.
+        </p>
+    </div>
+
+    <div class="colu">
+        <h3>Motivation</h3>
+        <div class="twocol">
+            <div>
+                <p style="margin-top: 0;">
+                In many application areas such as linear temporal logic, obtaining data with a larger vocabulary is significantly more expensive.
+                As a result, it is desirable to train a model with an extensible vocabulary that can generalize to unseen tokens during test time.
+                This problem was not investigated previously to the best of our knowledge.
+                </p>
+            </div>
+            <div>
+                <img src="ltl-scaling.png" alt="Scaling Plot">
+                <p class="viddesc">Time required to solve a linear temporal logic formula using classical algorithms.</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="vidcolu">
+        <h2>Our Method</h2>
+        <video controls autoplay loop>
+            <source src="generalization.mp4" type="video/mp4">
+            Your browser does not support the video tag.
+        </video>
+        <p class="viddesc">
+        Since all interchangeable tokens share the same learnable weights in our method, we can easily add new tokens during test time by generating the random parts.
+        </p>
+    </div>
+
+    <div class="colu">
+        <h3>Details</h3>
+        <p>
+        <ul>
+            <li>We use <b>weight tying</b> to align input and output embeddings.</li>
+            <li>We propose <b>multiple methods</b> to generate the <b>random part</b>.
+                <ul>
+                    <li>Some of them use <b>discrete sampling sets</b>.</li>
+                    <li>We devise methods to <b>efficiently ensure uniqueness</b>.</li>
+                </ul>
+            </li>
+            <li>To ensure training stability, we use <b>feature normalization</b>.</li>
+            <li>We adapt the <b>AdaCos loss function</b> for autoregressive language modeling, which is novel in literature to the best of our knowledge.</li>
+        </ul>
+        Please see the full paper for more details.
+        </p>
+    </div>
+
+    <div class="shadow">
+        <div class="colu">
+            <h2>Experiments</h2>
+            <p>
+            We perform experiments on three problems:
+            <ol>
+                <li>Copying with extendable vocabulary</li>
+                <li>Solving linear temporal logic</li>
+                <li>Predicting assignments for propositional logic</li>
+            </ol>
+            </p>
+            <p>
+            Our method achieves flawless performance on the first task, extrapolating to a vocabulary size of 160 after being trained on only 20 unique characters.
+            It also combines well with positional encoding methods that enable length generalization (e.g., RoPE).
+            Further details are given in the paper.
+            </p>
+        </div>
+    </div>
+
+    <div class="vidcolu">
+        <h2>Models</h2>
+        <div class="fours">
+            <video class="fours-el" autoplay loop> <source src="b-proposed.webm" type="video/mp4"> Your browser does not support the video tag. </video>
+            <img class="fours-el" src="b-base.png" alt="Baseline">
+            <img class="fours-el" src="b-full.png" alt="Full Vocabulary Baseline">
+            <video class="fours-el" autoplay loop> <source src="b-alpha.webm" type="video/mp4"> Your browser does not support the video tag. </video>
+        </div>
+        <p class="viddesc">
+        Embedding matrices of the methods evaluated in experiments. Interchangeable tokens are at the bottom of matrix, separated by a small gap. The full vocabulary baseline requires a different training dataset with extended vocabulary.
+        Note that the alpha-renaming baseline is also introduced by our work, as a more straightforward approach to enforce alpha-equivalence.
+        </p>
+
+        <h2>Experimental Results</h2>
+        <img src="ltl-heatmap.svg" alt="Scaling Plot">
+        <p class="mindesc">(a) LTL Solving</p>
+        <img src="prop-heatmap.svg" alt="Scaling Plot">
+        <p class="mindesc">(b) Propositional Logic</p>
+        <p class="viddesc">Heatmaps visualizing the ratio of correct predictions on a special test set, for LTL solving (top) and propositional logic (bottom)
+        tasks. The brightness of the color depends on the sample size, with full brightness representing 100 samples. The dashed white box
+        represents the boundaries of the training dataset. AP stands for "Atomic Proposition", i.e., variable.</p>
+    </div>
+
+    <footer>
+        <div class="vidcolu">
+            <h2>Bibtex</h2>
+            <pre>
+@misc{isik2025interchangeable,
+  title={Interchangeable Token Embeddings for Extendable Vocabulary and Alpha-Equivalence}, 
+  author={İlker Işık and Ramazan Gokberk Cinbis and Ebru Aydin Gol},
+  year={2025},
+  eprint={2410.17161},
+  archivePrefix={arXiv},
+  primaryClass={cs.CL},
+  url={https://arxiv.org/abs/2410.17161}, 
+}</pre>
+        </div>
+        <div class="colu">
+            <p class="foot">
+            Copyright © 2025 İlker Işık
+            </p>
+        </div>
+    </footer>
+
+</body>
+</html>
