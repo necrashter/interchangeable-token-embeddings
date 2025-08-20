@@ -7,10 +7,6 @@ def add_dataset_arguments(parser):
     group.add_argument('--data-dir', default='data', help='directory of datasets')
     group.add_argument('--ds-name', default='ltl-35', help='Name of the dataset to use')
     group.add_argument('--max-trace-length', type=int, default=-1, help='Maximum length of a trace. Samples exceeding this will be filtered out')
-    group.add_argument('--min-aps', type=int, help='Minimum number of APs in a formula')
-    group.add_argument('--max-aps', type=int, help='Maximum number of APs in a formula')
-    group.add_argument('--exact-aps', type=int, help='Exact number of APs in a formula, overrides min-aps and max-aps')
-    group.add_argument('--vocab-aps', type=int, help='Override the number of APs in the vocabulary')
 
 
 def add_training_arguments(parser):
@@ -67,8 +63,6 @@ def add_eval_arguments(parser):
 
     group.add_argument("--equivalence", type=str, choices=['full', 'automata'], help="Equivalence checking method (full or automata), disabled by default")
 
-    group.add_argument('--max-perm', type=int, help="Maximum number of permutations in resymbolize evaluation")
-
 
 def add_embed_arguments(parser):
     group = parser.add_argument_group("Embedder Arguments", "Only applicable if using a decoder-only model or --merged-vocab.")
@@ -95,7 +89,6 @@ def add_ted_arguments(parser):
     group.add_argument("--enc-pe", type=str, default='sinusoid', help="Encoder's positional embedding type")
     group.add_argument("--dec-pe", type=str, default='sinusoid', help="Decoder's positional embedding type")
     group.add_argument('--no-pe-cross-keys', action='store_true', default=False, help="When RoPE is enabled, don't use RoPE for cross-attention keys")
-    group.add_argument('--tree-pos-enc', action='store_true', default=False, help='use tree positional encoding')
     add_embed_arguments(parser)
 
 def add_ted_gen_arguments(parser):
@@ -119,7 +112,7 @@ def apply_seed(seed):
     print("Manual Seed:", seed)
 
 
-def get_argparser():
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", type=str, default="models/default")
     parser.add_argument("--device", help="Device to use for training (default: cuda if available)")
@@ -138,11 +131,6 @@ def get_argparser():
         add_eval_arguments(eval_parser)
         globals()[f"add_{model_type}_gen_arguments"](eval_parser)
 
-    return parser
-
-
-if __name__ == "__main__":
-    parser = get_argparser()
     args = parser.parse_args()
 
     if args.seed is not None:

@@ -117,30 +117,11 @@ def pool_iter(process_item, data, threads=None, timeout=30, tqdm_desc=None, leav
 
 
 def process_ltl_item(item, formula_format):
-    pred_str, trace_str, formula_str = item
-    start_time = time.time()
-    try:
-        pred_obj = ltl_trace(pred_str, format=formula_format)
-    except ParseError as e:
-        return {"result": "invalid", "error": f"{e}", "time": time.time() - start_time}
-    formula_obj = ltl_formula(formula_str, format=formula_format)
-    if trace_str:
-        trace_obj = ltl_trace(trace_str, format=formula_format)
-        if pred_obj.equal_to(trace_obj, extended_eq=True):
-            return {"result": "exact match", "time": time.time() - start_time}
-    # spot trace check
-    formula_automaton = spot.formula(formula_obj.to_str('spot')).translate()
-    pred_automaton = spot.parse_word(pred_obj.to_str('spot')).as_automaton()
-    try:
-        spot_holds = spot.contains(formula_automaton, pred_automaton)
-        result = "semantically correct" if spot_holds else "incorrect"
-        return {"result": result, "time": time.time() - start_time}
-    except RuntimeError as e:
-        return {
-            "result": "runtime error",
-            "error": repr(e),
-            "time": time.time() - start_time,
-        }
+    formula_str, target_str = item
+    if formula_str == target_str:
+        return {"result": "exact match"}
+    else:
+        return {"result": "invalid"}
 
 
 def equivalence_item(item, formula_format, equivalence_method):
@@ -176,7 +157,7 @@ def evaluate_ltl(data, polish=True, threads=None, timeout=30, leave_tqdm=True, e
 
     results = []
     with pool_iter(process_item, data, threads, timeout, tqdm_desc="Evaluate", leave_tqdm=leave_tqdm) as iterator:
-        for a, b, c in data:
+        for a, b in data:
             try:
                 result = next(iterator)
             except TimeoutError:
@@ -194,30 +175,11 @@ def evaluate_ltl(data, polish=True, threads=None, timeout=30, leave_tqdm=True, e
                     "traceback": traceback.format_exc(),
                     "time": 0.0,
                 }
-            result.update({"prediction": a, "trace": b, "formula": c})
+            result.update({"output": a, "target": b})
             results.append(result)
 
     if equivalence_method is not None:
-        if equivalence_method not in ['full', 'automata']:
-            print(f"[ERROR] Invalid equivalence method: '{equivalence_method}', skipping second pass")
-            return results
-        pass2_items = []
-        pass2_indices = []
-        for result in results:
-            if result['result'] == 'semantically correct':
-                pass2_items.append((a, c))
-                pass2_indices.append(len(results) - 1)
-        process_item = partial(equivalence_item, formula_format=formula_format, equivalence_method=equivalence_method)
-        with pool_iter(process_item, pass2_items, threads, timeout, tqdm_desc="Equivalence", leave_tqdm=leave_tqdm) as iterator:
-            for i in pass2_indices:
-                try:
-                    result = next(iterator)
-                except Exception as e:
-                    results[i]["equivalence_error"] = repr(e)
-                if isinstance(result, str):
-                    results[i]["equivalence_error"] = result
-                elif result:
-                    results[i]["result"] = "equivalent"
+        raise ValueError()
 
     return results
 

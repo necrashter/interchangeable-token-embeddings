@@ -17,8 +17,6 @@ from autoregltl.utils import describe_statistics, tictoc_histogram, init_plot_fo
 
 
 def analyze_ltl_results(results, args, result_dir):
-    eval_times = [result["time"] for result in results]
-
     analysis = trace_check.analyze_results(results)
     res = trace_check.per_size_analysis(analysis, save_analysis=os.path.join(result_dir, "size_hist"))
     total = len(results)
@@ -45,9 +43,6 @@ def analyze_ltl_results(results, args, result_dir):
     with open(os.path.join(result_dir, "summary.json"), 'w') as f:
         json.dump(res, f, indent=4)
 
-    eval_times = {"Trace Evaluation Times": eval_times}
-    tictoc_histogram(eval_times, save_to=os.path.join(result_dir, "trace_times.png"), figsize=(8, 5))
-
 
 def evaluate_model(model_path, model, args, get_gen_args):
     dataset_vocab = dataset.get_dataset_vocab(args, model.config)
@@ -60,41 +55,17 @@ def evaluate_model(model_path, model, args, get_gen_args):
 
     result_dir = os.path.join(model_path, args.result_dir_name)
     os.makedirs(result_dir, exist_ok=True)
-    if args.load_non_se:
-        with open(os.path.join(result_dir, "evaluation.json"), 'r') as f:
-            results = json.load(f)
-    else:
-        predictions = model.generate_predictions(test_dataset, args.max_length, gen_args)
-        results = trace_check.evaluate_ltl(predictions, threads=args.eval_threads, timeout=args.eval_timeout, equivalence_method=args.equivalence)
-        with open(os.path.join(result_dir, "evaluation.json"), 'w') as f:
-            json.dump(results, f, indent=4)
-        analyze_ltl_results(results, args, result_dir)
 
-    if args.syntax_enforcing:
-        new_samples = []
-        new_samples_i = []
-        for i, (sample, result) in enumerate(zip(test_dataset, results)):
-            if result['result'] == 'invalid':
-                new_samples.append(sample)
-                new_samples_i.append(i)
-        if new_samples:
-            print()
-            print("Applying syntax enforcing to invalid samples...")
-            gen_args['syntax_enforcer'] = LTLSyntaxEnforcerConfig(model.config.vocab)
-            result_dir = os.path.join(model_path, args.result_dir_name + "-se")
-            os.makedirs(result_dir, exist_ok=True)
-            new_dataset = dataset.SeqDataset(new_samples)
-            new_predictions = model.generate_predictions(new_dataset, args.max_length, gen_args)
-            new_results = trace_check.evaluate_ltl(new_predictions, threads=args.eval_threads, timeout=args.eval_timeout, equivalence_method=args.equivalence)
-            for i, result in zip(new_samples_i, new_results):
-                results[i] = result
-
-            with open(os.path.join(result_dir, "evaluation.json"), 'w') as f:
-                json.dump(results, f, indent=4)
-            analyze_ltl_results(results, args, result_dir)
-        else:
-            # No invalid, simply copy
-            shutil.copytree(result_dir, result_dir + "-se", dirs_exist_ok=True)
+    predictions = model.generate_predictions(test_dataset, args.max_length, gen_args)
+    results = trace_check.evaluate_ltl(predictions, threads=args.eval_threads, timeout=args.eval_timeout, equivalence_method=args.equivalence)
+    with open(os.path.join(result_dir, "evaluation.json"), 'w') as f:
+        json.dump(results, f, indent=4)
+    res = defaultdict(int)
+    for result in results:
+        res[result["result"]] += 1
+    summary = {k: res.get(k, 0) for k in ["semantically correct", "exact match", "equivalent", "incorrect", "invalid", "timeout"]}
+    print(summary)
+    # analyze_ltl_results(results, args, result_dir)
 
 
 

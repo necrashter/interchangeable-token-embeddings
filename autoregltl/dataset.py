@@ -11,7 +11,7 @@ from torch.utils.data import Dataset
 import urllib.request
 
 from autoregltl.ltl.vocab import MergedLTLVocab, EncDecVocab
-from autoregltl.ltl.parser import ParseError, ltl_formula, ltl_trace
+from autoregltl.ltl.chars import CHARS
 
 
 def download_dataset(dataset_name, split, dataset_dir):
@@ -47,21 +47,11 @@ def read_pairs(
     max_formula_length,
     max_trace_length,
     max_samples = None,
-    min_aps = None,
-    max_aps = None,
+    print_filtered = True,
 ):
     """
     Expects data file to have formula\ntrace\n format
     """
-    if min_aps is not None or max_aps is not None:
-        min_aps = min_aps if min_aps is not None else 0
-        max_aps = max_aps if max_aps is not None else float('inf')
-        def ap_filter(formula):
-            aps = len({f for f in formula if f.islower()})
-            return aps < min_aps or aps > max_aps
-    else:
-        ap_filter = lambda x: False
-
     filtered = 0
     pairs = []
     with open(filename, 'r') as file:  # expect formula\ntrace\n format
@@ -69,18 +59,15 @@ def read_pairs(
             if formula_line == '\n':
                 break
             formula_line = formula_line.strip()
-            trace_line = next(file).strip()  # get second line
-            if (max_formula_length >= 0 and len(formula_line) > max_formula_length) or \
-               (max_trace_length >= 0 and len(trace_line) > max_trace_length) or \
-               ap_filter(formula_line):
+            if max_formula_length >= 0 and len(formula_line) > max_formula_length:
                 filtered += 1
                 continue
-            pairs.append((trace_line, formula_line))
+            pairs.append(formula_line)
 
     if max_samples is not None:
         pairs = pairs[:max_samples]
 
-    print("Filtered out", filtered, "samples")
+    if print_filtered: print("Filtered out", filtered, "samples")
     return pairs
 
 
@@ -92,10 +79,9 @@ class RawLTLDataset(SeqDataset):
         max_formula_length,
         max_trace_length,
         max_samples = None,
-        min_aps = None,
-        max_aps = None,
+        print_filtered = True,
     ):
-        pairs = read_pairs(filename, max_formula_length, max_trace_length, max_samples, min_aps, max_aps)
+        pairs = read_pairs(filename, max_formula_length, max_trace_length, max_samples, print_filtered)
         super().__init__(pairs)
 
 
@@ -107,20 +93,18 @@ class DecoderLTLDataset(SeqDataset):
         max_formula_length,
         max_trace_length,
         max_samples = None,
-        min_aps = None,
-        max_aps = None,
     ):
-        pairs = read_pairs(filename, max_formula_length, max_trace_length, max_samples, min_aps, max_aps)
+        pairs = read_pairs(filename, max_formula_length, max_trace_length, max_samples)
 
-        def process_pair(trace_str, formula_str):
-            trace = vocab.encode_trace(trace_str)
-            formula = vocab.encode_ltl(formula_str)
+        def process_pair(trace_str):
+            trace = vocab.encode_trace(trace_str + ";")
+            formula = vocab.encode_ltl(trace_str)
             # No need to feed EOS in input
             input_ids = trace + formula
             labels = ([-100] * (len(trace)-1)) + formula + [vocab.eos_id]
             return torch.tensor(input_ids), torch.tensor(labels)
 
-        data = [process_pair(*pair) for pair in tqdm(pairs, desc=os.path.basename(filename))]
+        data = [process_pair(pair) for pair in tqdm(pairs, desc=os.path.basename(filename))]
         super().__init__(data)
 
 
@@ -143,47 +127,29 @@ class EncDecLTLDataset(SeqDataset):
         vocab: EncDecVocab,
         max_formula_length,
         max_trace_length,
-        tree_pos_enc = False,
         max_samples = None,
-        min_aps = None,
-        max_aps = None,
         pairs = None,
     ):
         if pairs is None:
-            pairs = read_pairs(filename, max_formula_length, max_trace_length, max_samples, min_aps, max_aps)
+            pairs = read_pairs(filename, max_formula_length, max_trace_length, max_samples)
 
         if isinstance(vocab, EncDecVocab):
-            def process_pair0(trace_str, formula_str):
-                # Input is ltl, output is trace
-                trace = vocab.inp.encode(trace_str, prepend_start_token=False)
+            def process_pair(formula_str):
+                # Input is trace, output is ltl
                 formula = vocab.out.encode(formula_str, prepend_start_token=False)
-                return torch.tensor(formula), torch.tensor(trace)
+                return torch.tensor(formula), torch.tensor(formula)
         elif isinstance(vocab, MergedLTLVocab):
-            def process_pair0(trace_str, formula_str):
-                # Input is ltl, output is trace
-                trace = vocab.encode_trace(trace_str, eos=True)
+            def process_pair(formula_str):
                 formula = vocab.encode_ltl(formula_str, eos=True)
-                return torch.tensor(formula), torch.tensor(trace)
+                return torch.tensor(formula), torch.tensor(formula)
         else:
             raise ValueError(f"Unsupported vocab type: {type(vocab)}")
-        
-        if tree_pos_enc:
-            def process_pair(trace_str, formula_str):
-                formula = ltl_formula(formula_str, 'network-polish')
-                position_list = formula.binary_position_list(format='lbt', add_first=True)
-                # pad to max length
-                max_length = max([len(l) for l in position_list])
-                padded_position_list = [l + [0] * (max_length - len(l)) for l in position_list]
-                pe = torch.tensor(padded_position_list, dtype=torch.float32)
-                return process_pair0(trace_str, formula_str) + (pe,)
-        else:
-            process_pair = process_pair0
 
         if filename is not None:
             iterator = tqdm(pairs, desc=os.path.basename(filename))
         else:
             iterator = pairs
-        data = [process_pair(*pair) for pair in iterator]
+        data = [process_pair(pair) for pair in iterator]
         super().__init__(data)
 
 
@@ -232,13 +198,7 @@ def get_dataset_vocab(args, config=None):
     # \b is word boundary
     if matches := re.findall(r'\b(\d+)ap\b', args.ds_name):
         ap_count = int(matches[0])
-        aps = [chr(i) for i in range(ord('a'), ord('z')+1)][:ap_count]
-    
-    if args.vocab_aps:
-        if args.vocab_aps < len(aps):
-            raise ValueError(f"This dataset requires at least {len(aps)} aps")
-        elif args.vocab_aps > len(aps):
-            aps = [chr(i) for i in range(ord('a'), ord('z')+1)][:args.vocab_aps]
+        aps = CHARS[:ap_count]
 
     if getattr(args, 'merged_vocab', False) or getattr(config, 'merged_embedder', None) is not None:
         merge_tokens = args.merge_tokens if config is None else config.vocab.merge_tokens
@@ -285,8 +245,6 @@ def get_dataset(args, split, dataset_class, **kwargs):
     dataset_args = {
         'max_formula_length': max_formula_length,
         'max_trace_length': args.max_trace_length,
-        'min_aps': args.exact_aps if args.exact_aps is not None else args.min_aps,
-        'max_aps': args.exact_aps if args.exact_aps is not None else args.max_aps,
     }
     dataset_args.update(kwargs)
 

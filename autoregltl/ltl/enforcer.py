@@ -28,7 +28,7 @@ class LTLSyntaxEnforcerConfig(LogitsProcessor):
 
         if isinstance(vocab, MergedLTLVocab):
             self.vocab = vocab
-            self.vocab_size = self.vocab.trace_size()
+            self.vocab_size = self.vocab.ltl_size()
             self.operand_count[EOS_TOKEN] = 1  # Ignoring pad tokens
         elif isinstance(vocab, EncDecVocab):
             self.vocab = vocab.out

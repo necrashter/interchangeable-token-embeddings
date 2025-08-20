@@ -3,65 +3,52 @@ import numpy as np
 import os
 import sys
 import json
+import shutil
 import traceback
-import random
 from glob import glob
 from collections import defaultdict
 from typing import Dict, Union, Any, Optional, Tuple, List
 from tqdm.auto import tqdm
 from pprint import pprint
-from concurrent.futures import TimeoutError
-from pebble import ProcessPool, ProcessExpired
-
-import spot
 
 from autoregltl.ltl.enforcer import LTLSyntaxEnforcerConfig
 from autoregltl import dataset
-from autoregltl.ltl.trace_check import pool_iter
-from autoregltl.ltl.parser import ParseError, ltl_formula, ltl_trace
+from autoregltl.ltl import trace_check
 from autoregltl.utils import describe_statistics, tictoc_histogram, init_plot_font
 from autoregltl.eval import get_result_dir_name
 
 from itertools import permutations
 
-def generate_equivalent_expressions(expression, aps, max_perm=None):
+def generate_equivalent_expressions(expression, aps):
     # Extract unique variables from the expression
-    unique_variables = sorted(set([ch for ch in expression if ch.islower()]))
+    unique_variables = sorted(set([ch for ch in expression if ch.isalpha()]))
+    
+    # Generate all permutations of valid variable names of the length of unique variables
+    permuted_variables = permutations(aps, len(unique_variables))
+    
     # List to hold all equivalent expressions
     equivalent_expressions = []
     
-    if max_perm is None:
-        # Generate all permutations of valid variable names of the length of unique variables
-        for perm in permutations(aps, len(unique_variables)):
-            # Replace variables with each permutation
-            translation_map = {original: new for original, new in zip(unique_variables, perm)}
-            new_expression = ''.join([translation_map.get(ch, ch) for ch in expression])
-            equivalent_expressions.append(new_expression)
-    else:
-        used_perms = set()
-        while len(used_perms) < max_perm:
-            perm = tuple(random.sample(aps, len(unique_variables)))
-            if perm not in used_perms:
-                used_perms.add(perm)
-                # Replace variables with each permutation
-                translation_map = {original: new for original, new in zip(unique_variables, perm)}
-                new_expression = ''.join([translation_map.get(ch, ch) for ch in expression])
-                equivalent_expressions.append(new_expression)
+    # Replace variables with each permutation
+    for perm in permuted_variables:
+        translation_map = {original: new for original, new in zip(unique_variables, perm)}
+        new_expression = ''.join([translation_map.get(ch, ch) for ch in expression])
+        equivalent_expressions.append(new_expression)
     
     return equivalent_expressions
 
 
 class ResymbolizeDataset(dataset.SeqDataset):
-    def __init__(self, dataset, aps, max_perm=None):
+    def __init__(self, dataset, aps):
         self.base_dataset = dataset
         self.aps = aps
         new_data = []
         self.group_sizes = []
         for trace, formula in dataset.data:
-            resyms = generate_equivalent_expressions(formula, aps, max_perm)
+            resyms = generate_equivalent_expressions(trace, aps)
             self.group_sizes.append(len(resyms))
-            # Trace is not required for generation
-            new_data += [(trace, f) for f in resyms]
+            # Formula is not required for generation
+            new_data += [(trace, formula) for trace in resyms]
         print("Original dataset size:", len(dataset.data))
         print("Permutations dataset size:", len(new_data))
         super().__init__(new_data)
@@ -70,73 +57,25 @@ class ResymbolizeDataset(dataset.SeqDataset):
         # Each group is a list of (prediction, trace, formula)
         out = []
         for group, (base_trace, base_formula) in zip(regrouped_predictions, self.base_dataset.data):
-            unique_variables = sorted(set([ch for ch in base_formula if ch.islower()]))
-            predictions = defaultdict(int)
+            unique_variables = sorted(set([ch for ch in base_trace if ch.isalpha()]))
+            predictions = set()
             for item, perm in zip(group, permutations(self.aps, len(unique_variables))):
                 # Undo the permutation
                 translation_map = {new: original for original, new in zip(unique_variables, perm)}
                 prediction = ''.join([translation_map.get(ch, ch) for ch in item[0]])
-                predictions[prediction] += 1
-            predictions = dict(predictions)
-            assert len(group) == sum(predictions.values())
+                predictions.add(prediction)
             item = {
                 "trace": base_trace,
-                "formula": base_formula,
-                "predictions": predictions,
+                "target": base_formula,
+                "predictions": list(predictions),
                 "pred_count": len(predictions),
                 "perm_count": len(group),
                 "ap_count": len(unique_variables),
-                "TRC": 1.0 - ((len(predictions)-1) / (len(group)-1)),
             }
+            if len(group) > 1:
+                item["TRC"] = 1.0 - ((len(predictions)-1) / (len(group)-1))
             out.append(item)
         return out
-
-
-def _eval_item(item):
-    """
-    `item` is a list element from unresym output
-    """
-    eval_results = []
-    prev_automata = []
-    invalids = []
-    formula_automaton = spot.formula(ltl_formula(item['formula'], 'network-polish').to_str('spot')).translate()
-    for prediction in item['predictions'].keys():
-        try:
-            trace_obj = ltl_trace(prediction, 'network-polish')
-        except ParseError:
-            invalids.append(prediction)
-            continue
-        automaton = spot.parse_word(trace_obj.to_str('spot')).as_automaton()
-        for result, prev_automaton in zip(eval_results, prev_automata):
-            if automaton == prev_automaton:
-                result['list'].append(prediction)
-                break
-        else:
-            # Not equivalent to anything
-            res = "semantically correct" if spot.contains(formula_automaton, automaton) else "incorrect"
-            eval_results.append({
-                "result": res,
-                "list": [prediction],
-            })
-    if invalids:
-        eval_results.append({
-            "result": "invalid",
-            "list": invalids,
-        })
-    eval_sum = defaultdict(int)
-    for result in eval_results:
-        label = result['result']
-        for p in result['list']:
-            eval_sum[label] += item['predictions'][p]
-    eval_sum = dict(eval_sum)
-    assert item['perm_count'] == sum(eval_sum.values())
-    output = {
-        "evaluation": eval_results,
-        "eval_sum": eval_sum,
-    }
-    if (correct := eval_sum.get('semantically correct', None)) is not None:
-        output["correct_rate"] = correct / item['perm_count']
-    return output
 
 
 def evaluate_model(model_path, args, load_model, get_gen_args):
@@ -145,16 +84,12 @@ def evaluate_model(model_path, args, load_model, get_gen_args):
     param_count = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Number of parameters: {param_count:_}")
 
-    if args.min_aps is None or args.min_aps < 1:
-        print("Forcing min_aps to 1")
-        args.min_aps = 1
-
     dataset_vocab = dataset.get_dataset_vocab(args, model.config)
     # Only input compatibility is required
     if not model.config.vocab.are_inputs_compatible(dataset_vocab):
         sys.exit("Dataset vocabulary is not compatible with the model")
     test_dataset = dataset.get_dataset(args, args.split, dataset.RawLTLDataset, max_samples=args.max_samples)
-    resym_dataset = ResymbolizeDataset(test_dataset, dataset_vocab.aps, args.max_perm)
+    resym_dataset = ResymbolizeDataset(test_dataset, dataset_vocab.aps)
 
     gen_args = get_gen_args(args)
     if args.syntax_enforcing:
@@ -163,76 +98,45 @@ def evaluate_model(model_path, args, load_model, get_gen_args):
     result_dir = os.path.join(model_path, args.result_dir_name)
     os.makedirs(result_dir, exist_ok=True)
 
-    if os.path.exists(os.path.join(result_dir, "predictions.json")):
-        print("Predictions already exist, skipping generation and loading from file")
-        with open(os.path.join(result_dir, "predictions.json"), 'r') as f:
-            unresymed = json.load(f)
-    else:
-        predictions = model.generate_predictions(resym_dataset, args.max_length, gen_args)
-        it = iter(predictions)
-        regrouped = [[next(it) for _ in range(group_size)] for group_size in resym_dataset.group_sizes]
+    predictions = model.generate_predictions(resym_dataset, args.max_length, gen_args)
+    it = iter(predictions)
+    regrouped = [[next(it) for _ in range(group_size)] for group_size in resym_dataset.group_sizes]
 
-        with open(os.path.join(result_dir, "raw_predictions.json"), 'w') as f:
-            json.dump(regrouped, f, indent=4)
-        
-        unresymed = resym_dataset.unresym(regrouped)
-        with open(os.path.join(result_dir, "predictions.json"), 'w') as f:
-            json.dump(unresymed, f, indent=4)
-
-    # Evaluation
-    with pool_iter(_eval_item, unresymed, args.eval_threads, args.eval_timeout, tqdm_desc="Evaluate") as iterator:
-        for item in unresymed:
-            try:
-                result = next(iterator)
-                item |= result
-            except TimeoutError:
-                item['evaluation'] = {"result": "timeout", "time": args.eval_timeout}
-            except ProcessExpired as e:
-                item['evaluation'] = {
-                    "result": "runtime error",
-                    "error": f"ProcessExpired with exit code {e.exitcode}",
-                    "time": 0.0,
-                }
-            except Exception as e:
-                item['evaluation'] = {
-                    "result": "runtime error",
-                    "error": repr(e),
-                    "traceback": traceback.format_exc(),
-                    "time": 0.0,
-                }
-
-    # Analysis
-
-    def summarize_label(label):
-        all_trcs = [item[label] for item in unresymed if label in item]
-        ap_trcs = defaultdict(list)
-        for item in unresymed:
-            if label in item:
-                ap_count = item["ap_count"]
-                ap_trcs[ap_count].append(item[label])
-
-        summ = {label: describe_statistics(all_trcs, True)}
-        summ |= {f"{k} AP {label}": describe_statistics(v, True) for k, v in ap_trcs.items()}
-
-        # Plot time
-        ap_trcs = dict(sorted(ap_trcs.items()))
-        ap_trcs["All"] = all_trcs
-        resym_plot(f"{label} Box Plot", ap_trcs, os.path.join(result_dir, f"{label}-box.png"), violin=False)
-        resym_plot(f"{label} Violin Plot", ap_trcs, os.path.join(result_dir, f"{label}-violin.png"), violin=True)
-        return summ
+    # results = trace_check.evaluate_ltl(predictions, threads=args.eval_threads, timeout=args.eval_timeout)
+    with open(os.path.join(result_dir, "raw_predictions.json"), 'w') as f:
+        json.dump(regrouped, f, indent=4)
     
-    summary = {}
-    summary |= summarize_label("correct_rate")
-    summary |= summarize_label("TRC")
+    unresymed = resym_dataset.unresym(regrouped)
+    with open(os.path.join(result_dir, "predictions.json"), 'w') as f:
+        json.dump(unresymed, f, indent=4)
+
+    startlen = len(unresymed)
+    unresymed = [item for item in unresymed if "TRC" in item]
+    filtered = startlen - len(unresymed)
+    if filtered > 0:
+        print(filtered, "samples didn't contain any APs (only one permutation) and filtered out")
+
+    all_trcs = [item["TRC"] for item in unresymed]
+    ap_trcs = defaultdict(list)
+    for item in unresymed:
+        ap_count = item["ap_count"]
+        ap_trcs[ap_count].append(item["TRC"])
+
+    summary = {
+        "TRC": describe_statistics(all_trcs, True),
+    }
+    summary |= {f"{k} AP TRC": describe_statistics(v, True) for k, v in ap_trcs.items()}
     print("SUMMARY:")
     pprint(summary)
-
-    with open(os.path.join(result_dir, "summary.json"), 'w') as f:
-        json.dump(summary, f, indent=4)
 
     with open(os.path.join(result_dir, "predictions.json"), 'w') as f:
         json.dump(unresymed, f, indent=4)
 
+    print("Generating and saving plots...")
+    ap_trcs = dict(sorted(ap_trcs.items()))
+    ap_trcs["All"] = all_trcs
+    resym_plot("TCR Box Plot", ap_trcs, os.path.join(result_dir, "TCR-box.png"), violin=False)
+    resym_plot("TCR Violin Plot", ap_trcs, os.path.join(result_dir, "TCR-violin.png"), violin=True)
     print("Done")
 
 

@@ -1,4 +1,3 @@
-import traceback
 import torch
 import pickle, os
 import editdistance
@@ -31,11 +30,11 @@ def eval2d(
         max_aps=30,
         min_length=3,
         max_length=30,
-        repeat_count=10,
+        repeat_count=1,
         figsize=(6, 5),
         eval_ds="cpy-eval",
         gen_args=None,
-        output = "eval2da.pkl",
+        output = "eval2d.pkl",
         save_all_predictions=False,
     ):
     if gen_args is None:
@@ -76,10 +75,6 @@ def eval2d(
         test_dataset = dataset.SeqDataset(datas)
         datasets[ap] = (test_dataset, sizes)
 
-    random.shuffle(all_pairs)
-    print("all_pairs len:", len(all_pairs))
-    all_pairs = all_pairs[:len(all_pairs)//10]
-    print("all_pairs len:", len(all_pairs))
     all_dataset = dataset.EncDecLTLDataset(
         filename=None,
         vocab=model.config.vocab,
@@ -89,74 +84,79 @@ def eval2d(
     )
     crossent = torch.nn.CrossEntropyLoss(reduction='sum')
 
-    results = {}
-    if model.config.vocab.dynamic_aps:
-        model.config.vocab.aps = CHARS[:max_aps]
-        evals = []
-        for repetition in tqdm(range(repeat_count), desc="Reps"):
-            model.merged_embedder.prepare()
-            w_matrix = model.merged_embedder.w.detach()
-
-            # Compute cross entropy loss on all_dataset
-            # Initalize dataloader
-            dataloader = torch.utils.data.DataLoader(
-                all_dataset,
-                batch_size=512,
-                shuffle=False,
-                collate_fn=dataset.EncDecLTLCollator(),
-            )
-            loss = 0
-            for inputs in dataloader:
-                logits = model(inputs["input_ids"].to(device), inputs["target_ids"].to(device))
-                labels = torch.where(inputs["target_ids"] == model.pad_id, -100, inputs["target_ids"]).to(device)
-                loss += crossent(logits.view(-1, logits.size(-1)), labels.view(-1)).item() / len(all_pairs)
-
-            evals.append({
-                "w_matrix": w_matrix,
-                "loss": loss,
-            })
-
-        evals = sorted(evals, key=lambda x: x["loss"])
-        # Get w_matrix of median
-        w_matrix = evals[len(evals) // 2]["w_matrix"]
-        # Set w_matrix of model to median
-        model.merged_embedder.w.set_(w_matrix)
-        results |= {
-            "w_matrix": w_matrix,
-            "loss": loss,
-        }
-    elif (merged_embedder := getattr(model, "merged_embedder", None)):
-        merged_embedder.prepare()
-
-    correct_matrix = torch.zeros(max_aps - min_aps + 1, max_length - min_length + 1)
-    editdist_matrix = torch.zeros(max_aps - min_aps + 1, max_length - min_length + 1)
-    # all_predictions = {}
-    for apcount in tqdm(list(range(3, max_aps+1))[::-1], desc="APs"):
+    evals = []
+    for repetition in tqdm(range(repeat_count), desc="Reps"):
         if model.config.vocab.dynamic_aps:
-            model.config.vocab.aps = CHARS[:apcount]
-            model.merged_embedder.shrink_w()
+            model.config.vocab.aps = CHARS[:max_aps]
+        model.merged_embedder.prepare()
 
-        test_dataset, sizes = datasets[apcount]
-        cum_preds = model.generate_predictions(
-            test_dataset,
-            max_length=max_length*2,
-            gen_args=gen_args,
-            leave_tqdm=False,
-            prepare_embedder=False,  # generate_predictions should NOT re-prep embedder
+        w_matrix = model.merged_embedder.w.detach().cpu()
+        all_predictions = {}
+
+        # Compute cross entropy loss on all_dataset
+        # Initalize dataloader
+        dataloader = torch.utils.data.DataLoader(
+            all_dataset,
+            batch_size=512,
+            shuffle=False,
+            collate_fn=dataset.EncDecLTLCollator(),
         )
-        for l, size in zip(range(apcount, max_length+1), sizes):
-            predictions, cum_preds = cum_preds[:size], cum_preds[size:]
-            correct = sum([a == b for a, b in predictions])
-            # all_predictions[(apcount, l)] = predictions
-            correct_matrix[apcount-min_aps, l-min_length] += correct / max_samples
-            t = torch.tensor([editdistance.eval(*a) for a in predictions], dtype=torch.float64)
-            editdist_matrix[apcount-min_aps, l-min_length] = t.mean()
-    
+        loss = 0
+        for inputs in dataloader:
+            logits = model(inputs["input_ids"].to(device), inputs["target_ids"].to(device))
+            labels = torch.where(inputs["target_ids"] == model.pad_id, -100, inputs["target_ids"]).to(device)
+            loss += crossent(logits.view(-1, logits.size(-1)), labels.view(-1)).item() / len(all_pairs)
+
+        correct_matrix = torch.zeros(max_aps - min_aps + 1, max_length - min_length + 1)
+        editdist_matrix = torch.zeros(max_aps - min_aps + 1, max_length - min_length + 1)
+        for apcount in tqdm(list(range(3, max_aps+1))[::-1], desc="APs", leave=False):
+            if model.config.vocab.dynamic_aps:
+                model.config.vocab.aps = CHARS[:apcount]
+                model.merged_embedder.shrink_w()
+
+            test_dataset, sizes = datasets[apcount]
+            cum_preds = model.generate_predictions(
+                test_dataset,
+                max_length=max_length*2,
+                gen_args=gen_args,
+                leave_tqdm=False,
+                prepare_embedder=False,  # generate_predictions should NOT re-prep embedder
+            )
+            for l, size in zip(range(apcount, max_length+1), sizes):
+                predictions, cum_preds = cum_preds[:size], cum_preds[size:]
+                correct = sum([a == b for a, b in predictions])
+                all_predictions[(apcount, l)] = predictions
+                correct_matrix[apcount-min_aps, l-min_length] += correct / max_samples
+                t = torch.tensor([editdistance.eval(*a) for a in predictions], dtype=torch.float64)
+                editdist_matrix[apcount-min_aps, l-min_length] = t.mean()
+        
+        evals.append({
+            "correct_matrix": correct_matrix,
+            "editdist_matrix": editdist_matrix,
+            "w_matrix": w_matrix,
+            "correct": triangular_mean(correct_matrix),
+            "editdist": triangular_mean(editdist_matrix),
+            "loss": loss,
+        })
+        if save_all_predictions:
+            with open(os.path.join(save_loc_dir, f"all_predictions{repetition}.pkl"), 'wb') as f:
+                pickle.dump(all_predictions, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    # Sort evals by editdist
+    evals = sorted(evals, key=lambda x: x["editdist"])
+
+    # Compute average correct and editdist
+    correct = np.mean([e["correct"] for e in evals])
+    editdist = np.mean([e["editdist"] for e in evals])
+    print(f"Correct: {correct}")
+    print(f"Editdist: {editdist}")
+    results = {
+        "evals": evals,
+        "correct": correct,
+        "editdist": editdist,
+    }
+
     results |= {
-        "correct_matrix": correct_matrix,
-        "editdist_matrix": editdist_matrix,
-        "correct": triangular_mean(correct_matrix),
-        "editdist": triangular_mean(editdist_matrix),
         "min_aps": min_aps,
         "min_length": min_length,
         "max_aps": max_aps,
@@ -164,8 +164,6 @@ def eval2d(
         "repeat_count": repeat_count,
         "eval_ds": eval_ds,
     }
-    print("Correct:", results["correct"])
-    print("Editdist:", results["editdist"])
     # SAVE
     with open(save_loc, 'wb') as f:
         pickle.dump(results, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -187,6 +185,8 @@ def eval2d(
         print("Failed to determine training dataset")
 
     # Plot
+    editdistmat = torch.stack([e["editdist_matrix"] for e in evals])
+    editdistmat = torch.mean(editdistmat, dim=0)
     apticks = list(range(min_aps, max_aps+1))
     lenticks = list(range(min_length, max_length+1))
     # plt.rcParams['ytick.right'] = plt.rcParams['ytick.labelright'] = True
@@ -197,10 +197,10 @@ def eval2d(
     mpl.rcParams['hatch.color'] = "#db2114"
     fig = plt.figure(figsize=figsize)
     ax = sn.heatmap(
-        editdist_matrix,
+        editdistmat,
         yticklabels=apticks, xticklabels=lenticks,
         cmap=sn.cm.rocket_r,
-        vmax=max(max_length, editdist_matrix.max().item()),
+        vmax=max(max_length, editdistmat.max().item()),
     )
     if ds_name is not None:
         # Denote training area
@@ -211,7 +211,7 @@ def eval2d(
     plt.xticks(rotation=90)
     ax.set_ylabel("Vocabulary size")
     ax.set_xlabel("Length")
-    plt.savefig(os.path.join(model_path, "eval2da.png"), bbox_inches="tight", dpi=192, pad_inches=0.02)
+    plt.savefig(os.path.join(model_path, "eval2d.png"), bbox_inches="tight", dpi=192, pad_inches=0.02)
 
 
 if __name__ == '__main__':
@@ -223,11 +223,11 @@ if __name__ == '__main__':
     parser.add_argument('--max-aps', type=int, default=30)
     parser.add_argument('--min-length', type=int, default=3)
     parser.add_argument('--max-length', type=int, default=30)
-    parser.add_argument('--repeat-count', type=int, default=10)
+    parser.add_argument('--repeat-count', type=int, default=1)
     parser.add_argument('--figsize', type=str, default="(6,5)")
     parser.add_argument('--test', action='store_true', default=False)
     parser.add_argument('--seed', type=int, default=42, help='Seed for the random number generator')
-    parser.add_argument('--output', type=str, default="eval2da.pkl")
+    parser.add_argument('--output', type=str, default="eval2d.pkl")
     args = parser.parse_args()
 
     seed = args.seed
@@ -252,5 +252,4 @@ if __name__ == '__main__':
                 output=args.output,
             )
         except Exception as e:
-            print("Error:")
-            traceback.print_exc()
+            print("Error:", e)

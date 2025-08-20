@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
+from autoregltl.ltl.chars import CHARS
 from .ap_embed_methods import get_ap_method, LearnableShuffledEmbeds
 from .normalization_methods import get_normalization_method
 
@@ -113,12 +114,14 @@ class DynamicEmbedder(nn.Module):
             if shuffle_aps is not None:
                 assert d_ap == 0
                 assert shuffle_aps > 0
-                vocab_size = vocab.size() - 26  # make sure no tokens for AP
+                # make sure no tokens for AP
+                vocab_size = vocab.size() - len(CHARS)
                 self.base_weight = nn.parameter.Parameter(torch.empty((vocab_size, d_model), **factory_kwargs))
                 self.ap_weight = nn.parameter.Parameter(torch.empty((shuffle_aps, d_model), **factory_kwargs))
             else:
                 assert d_ap > 0
-                vocab_size = vocab.size() - 25  # make sure only one token for AP
+                # make sure only one token for AP
+                vocab_size = vocab.size() - len(CHARS) + 1
                 d_base_embed = d_model - d_ap
                 self.base_weight = nn.parameter.Parameter(torch.empty((vocab_size, d_base_embed), **factory_kwargs))
                 self.base_vocab_size = vocab_size

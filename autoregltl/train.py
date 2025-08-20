@@ -134,25 +134,15 @@ def train(args, create_model, trainer_cls):
     if args.dry:
         return
 
-    dataset_kwargs = {
-        "dataset_class": dataset.DecoderLTLDataset if args.decoder_only else dataset.EncDecLTLDataset,
-        "vocab": vocab,
-    }
-    if args.tree_pos_enc:
-        dataset_kwargs['tree_pos_enc'] = True
+    dataset_cls = dataset.DecoderLTLDataset if args.decoder_only else dataset.EncDecLTLDataset
     train_dataset = None
     if args.eval:
-        val_dataset = dataset.get_dataset(args, args.val_split, max_samples=args.val_max_samples, **dataset_kwargs)
+        val_dataset = dataset.get_dataset(args, args.val_split, dataset_cls, vocab=vocab, max_samples=args.val_max_samples)
     else:
-        train_dataset = dataset.get_dataset(args, 'train', max_samples=args.train_max_samples, **dataset_kwargs)
-        val_dataset = dataset.get_dataset(args, args.val_split, max_samples=args.val_max_samples, **dataset_kwargs)
+        train_dataset = dataset.get_dataset(args, 'train', dataset_cls, vocab=vocab, max_samples=args.train_max_samples)
+        val_dataset = dataset.get_dataset(args, args.val_split, dataset_cls, vocab=vocab, max_samples=args.val_max_samples)
     trace_eval_dataset = dataset.get_dataset(args, args.val_split, dataset.RawLTLDataset, max_samples=args.trace_max_samples)
-    if args.decoder_only:
-        data_collator = dataset.DecoderLTLCollator()
-    elif args.tree_pos_enc:
-        data_collator = dataset.EncDecLTLCollator(args.d_embed_enc)
-    else:
-        data_collator = dataset.EncDecLTLCollator()
+    data_collator = dataset.DecoderLTLCollator() if args.decoder_only else dataset.EncDecLTLCollator()
 
     trainer = trainer_cls(
         loss_fct=get_loss_fct(args.loss_fct, model),
@@ -190,8 +180,12 @@ def train(args, create_model, trainer_cls):
 
     if args.eval:
         print(trainer.evaluate())
-    else:
-        save_command(args, param_count)
-        trainer.train(resume_from_checkpoint=args.resume)
-        trainer.save_model()
-        print("Saved model:", args.model_path)
+        return
+
+    save_command(args, param_count)
+    trainer.train(resume_from_checkpoint=args.resume)
+    trainer.save_model()
+    print("Saved model:", args.model_path)
+    # print("Final evaluation:")
+    # print(trainer.evaluate())
+    # print()

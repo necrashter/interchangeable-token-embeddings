@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Dict, Union, Any, Optional, Tuple, List
+from autoregltl.ltl.chars import CHARS
 
 
 EOS_TOKEN = '<eos>'
@@ -81,8 +82,8 @@ class EncDecVocab():
         trace_ops: list = ['&', '|', '!'],
         ltl_ops: list = ['U', 'X', '!', '&', '|'],
     ):
-        inp = CharVocab(aps=aps, consts=consts, ops=ltl_ops, start=True)
-        out = CharVocab(aps=aps, consts=consts, ops=trace_ops, specials=[';', '{', '}'], start=False)
+        inp = CharVocab(aps=aps, consts=consts, ops=trace_ops, specials=[';', '{', '}'], start=False)
+        out = CharVocab(aps=aps, consts=consts, ops=ltl_ops, start=True)
         return EncDecVocab(inp, out)
     
     def are_inputs_compatible(self, other):
@@ -105,9 +106,9 @@ class MergedLTLVocab():
     First token is always EOS_TOKEN, which is also used as PAD_TOKEN.
     """
     aps: list
-    consts: list = field(default_factory=lambda: ['0', '1'])
-    trace_ops: list = field(default_factory=lambda: ['&', '|', '!'])
-    ltl_ops: list = field(default_factory=lambda: ['U', 'X', '!', '&', '|'])
+    consts: list = field(default_factory=lambda: [])
+    trace_ops: list = field(default_factory=lambda: [])
+    ltl_ops: list = field(default_factory=lambda: [])
     merge_tokens: Optional[str] = None
     # Each ap_i in the input will be converted to #other_tokens + i
     # aps field will be ignored
@@ -130,31 +131,32 @@ class MergedLTLVocab():
 
         aps = [] if self.dynamic_aps else self.aps
 
+        assert self.merge_tokens == "all"
         if self.merge_tokens is None:
             # LTL first because it's the output
-            self.trace_tokens = self._add_tokens(aps + self.consts + self.trace_ops + [';', '{', '}'])
             self.ltl_tokens = self._add_tokens(aps + self.consts + self.ltl_ops)
+            self.trace_tokens = self._add_tokens(aps + self.consts + self.trace_ops + [';', '{', '}'])
         elif self.merge_tokens == "aps":
             common = self._add_tokens(aps + self.consts)
-            self.trace_tokens = common | self._add_tokens(self.trace_ops + [';', '{', '}'])
             self.ltl_tokens = common | self._add_tokens(self.ltl_ops)
+            self.trace_tokens = common | self._add_tokens(self.trace_ops + [';', '{', '}'])
         elif self.merge_tokens == "all":
             ltl_ops = self.ltl_ops
-            trace_ops = self.trace_ops + [';', '{', '}']
+            trace_ops = self.trace_ops
             # Determine common and unique ops
             common_ops = [x for x in ltl_ops if x in trace_ops]
             ltl_ops = [x for x in ltl_ops if x not in common_ops]
             trace_ops = [x for x in trace_ops if x not in common_ops]
             # Add to token list
             common = self._add_tokens(aps + self.consts + common_ops)
-            self.trace_tokens = common | self._add_tokens(trace_ops)
             self.ltl_tokens = common | self._add_tokens(ltl_ops)
+            self.trace_tokens = common | self._add_tokens(trace_ops)
         else:
             raise ValueError(f"Unsupported merge_tokens value: {self.merge_tokens}")
         
         if self.dynamic_aps:
-            # Add all lowercase alphabet characters
-            aps = self._add_tokens([chr(i) for i in range(ord('a'), ord('z')+1)])
+            # Add all printable characters
+            aps = self._add_tokens(CHARS)
             self.ltl_tokens |= aps
             self.trace_tokens |= aps
     
@@ -213,14 +215,11 @@ class MergedLTLVocab():
 
     def num_classes(self):
         if self.dynamic_aps:
-            return len(self.token_list) - 26 + len(self.aps)
+            return len(self.token_list) - len(CHARS) + len(self.aps)
         return len(self.token_list)
 
     def ltl_size(self):
         return len(self.ltl_tokens) + self.special_token_count
-
-    def trace_size(self):
-        return len(self.trace_tokens) + self.special_token_count
 
     def force_eos(self, logits, i):
         logits[i, self.eos_id+1:] = -float('inf')

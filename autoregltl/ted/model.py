@@ -9,10 +9,8 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from autoregltl.ltl.vocab import EncDecVocab, CharVocab, MergedLTLVocab
-from autoregltl.dataset import EncDecLTLCollator, EncDecLTLDataset
 from autoregltl.embedding import EmbedderConfig, DynamicEmbedder
 from autoregltl import positional_encoding as pe
-from autoregltl.ltl.parser import ParseError, ltl_formula, ltl_trace
 from .layers import attention
 from .beam_search import BeamSearch
 
@@ -42,8 +40,6 @@ class TransformerConfig:
     # Used for constructing the positional encoding buffers
     max_encode_length: int = 1024  # maximum length of input sequence
     max_decode_length: int = 1024  # maximum length of target sequence
-
-    tree_pos_enc: bool = False
 
     datatype: str = 'float32'  # datatype for floating point computations
 
@@ -418,7 +414,6 @@ class Transformer(nn.Module):
         input_padding_mask = create_padding_mask(input, self.pad_id, self.dtype)
 
         if positional_encoding is None and self.config.enc_pe == 'sinusoid':
-            assert not self.config.tree_pos_enc
             seq_len = input.size(1)
             positional_encoding = self.encoder_positional_encoding[:, :seq_len, :]
         encoder_output, encoder_attn_weights = self.encode(input, input_padding_mask, positional_encoding)
@@ -514,17 +509,8 @@ class Transformer(nn.Module):
     @torch.inference_mode()
     def generate_predictions(self, dataset, max_length, gen_args, leave_tqdm=True, prepare_embedder=True):
         self.eval()
-        if prepare_embedder:
-            enc_dec_dataset = EncDecLTLDataset(
-                filename=None,
-                vocab=self.config.vocab,
-                max_formula_length=None,
-                max_trace_length=None,
-                tree_pos_enc=self.config.tree_pos_enc,
-                pairs=dataset.data[:len(dataset.data)//10],
-            )
-            self.set_median_w(enc_dec_dataset)
-
+        if prepare_embedder and self.merged_embedder:
+            self.merged_embedder.prepare()
         for param in self.parameters():
             model_device = param.device
             break
@@ -534,7 +520,7 @@ class Transformer(nn.Module):
             input_encode = lambda x: vocab.inp.encode(x, prepend_start_token=False)
             output_decode = lambda x: vocab.out.decode(x)
         elif isinstance(vocab, MergedLTLVocab):
-            input_encode = lambda x: vocab.encode_ltl(x, eos=True)
+            input_encode = lambda x: vocab.encode_trace(x, eos=True)
             output_decode = lambda x: vocab.decode(x)
         else:
             raise ValueError(f"Unsupported vocab type: {type(vocab)}")
@@ -547,32 +533,19 @@ class Transformer(nn.Module):
             batch_size = 512
         dataloader = DataLoader(dataset, batch_size=batch_size)
         with tqdm(total=len(dataset), desc="Predict", leave=leave_tqdm) as pbar:
-            for (traces, formulas) in dataloader:
+            for formulas in dataloader:
                 # Pad by adding pad tokens to the right (end)
-                input_ids = [torch.tensor(input_encode(formula), dtype=torch.long) for formula in formulas]
+                input_ids = [torch.tensor(input_encode(trace), dtype=torch.long) for trace in formulas]
                 input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=self.pad_id)
-                positional_encoding = None
-                if self.config.tree_pos_enc:
-                    positional_encoding = []
-                    max_seq_len = input_ids.size(1)
-                    for formula in formulas:
-                        position_list = ltl_formula(formula, 'network-polish').binary_position_list(format='lbt', add_first=True)
-                        padded_position_list = [l + [0] * (self.config.d_embed_enc - len(l)) for l in position_list]
-                        pe = torch.tensor(padded_position_list, dtype=torch.float32)
-                        pe = F.pad(pe, (0, self.config.d_embed_enc - pe.size(-1), 0, max_seq_len - pe.size(-2)))
-                        positional_encoding.append(pe)
-                    positional_encoding = torch.stack(positional_encoding, dim=0)
                 out = self.generate(
                     input=input_ids.to(model_device),
                     # +1 for start token
                     max_decode_length = max_length + 1,
-                    positional_encoding = positional_encoding.to(model_device) if positional_encoding is not None else None,
                     **gen_args,
                 )['outputs']
-                for prediction, trace, formula in zip(out.tolist(), traces, formulas):
+                for prediction, formula in zip(out.tolist(), formulas):
                     prediction = output_decode(prediction)
-                    # formula trace target
-                    predictions.append((prediction, trace, formula))
+                    predictions.append((prediction, formula))
                 pbar.update(len(formulas))
         return predictions
 
@@ -608,57 +581,3 @@ class Transformer(nn.Module):
         config_path = os.path.join(save_directory, 'config.json')
         with open(config_path, 'w') as f:
             json.dump(asdict(self.config), f, indent=4)
-    
-    @torch.inference_mode()
-    def set_median_w(self, dataset, batch_size=512, repeat_count=10):
-        """
-        1. Evaluate cross entropy loss on the given dataset multiple times
-        2. Set the merged_embedder.w to the median of the loss
-        """
-        assert getattr(self, 'merged_embedder', None) is not None
-
-        self.eval()
-        for param in self.parameters():
-            device = param.device
-            break
-
-        if self.config.tree_pos_enc:
-            data_collator = EncDecLTLCollator(self.config.d_embed_enc)
-        else:
-            data_collator = EncDecLTLCollator()
-        crossent = torch.nn.CrossEntropyLoss(reduction='sum')
-
-        evals = []
-        for repetition in tqdm(range(repeat_count), desc="Reps"):
-            self.merged_embedder.prepare()
-            w_matrix = self.merged_embedder.w.detach()
-
-            # Compute cross entropy loss on all_dataset
-            # Initalize dataloader
-            dataloader = DataLoader(
-                dataset,
-                batch_size=batch_size,
-                shuffle=False,
-                collate_fn=data_collator,
-            )
-            loss = 0
-            for inputs in dataloader:
-                if self.config.tree_pos_enc:
-                    logits = self(inputs["input_ids"].to(device), inputs["target_ids"].to(device), inputs["pe"].to(device))
-                else:
-                    logits = self(inputs["input_ids"].to(device), inputs["target_ids"].to(device))
-                labels = torch.where(inputs["target_ids"] == self.pad_id, -100, inputs["target_ids"]).to(device)
-                loss += crossent(logits.view(-1, logits.size(-1)), labels.view(-1)).item() / len(dataset)
-
-            evals.append({
-                "w_matrix": w_matrix,
-                "loss": loss,
-            })
-
-        evals = sorted(evals, key=lambda x: x["loss"])
-        median = len(evals) // 2
-        # Get w_matrix of median
-        w_matrix = evals[median]["w_matrix"]
-        # Set w_matrix of model to median
-        self.merged_embedder.w.set_(w_matrix)
-        return evals[median]

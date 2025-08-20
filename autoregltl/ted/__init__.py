@@ -23,7 +23,6 @@ def create_model(args, vocab):
         # Not configurable for now
         # max_encode_length = args.max_encode_length,
         # max_decode_length = args.max_decode_length,
-        tree_pos_enc = args.tree_pos_enc,
     )
     return Transformer(config).to(torch.device(args.device))
 
