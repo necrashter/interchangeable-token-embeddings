@@ -3,6 +3,7 @@ import torch
 import pickle, os
 import editdistance
 import numpy as np
+import time
 from autoregltl import ted, dataset
 from autoregltl.ltl.chars import CHARS
 import random
@@ -101,19 +102,41 @@ def eval2d(
     correct_matrix = torch.zeros(max_aps + 1, max_length)
     count_matrix = torch.zeros(max_aps + 1, max_length)
     all_results = {}
+    timing_info = {}
+    total_time = 0.0
+    total_samples = 0
     for apcount in tqdm(list(range(min_aps, max_aps+1))[::-1], desc="APs"):
         if model.config.vocab.dynamic_aps:
             model.config.vocab.aps = CHARS[:apcount]
             model.merged_embedder.shrink_w()
 
         test_dataset, sizes = datasets[apcount]
+        dataset_size = len(test_dataset)
+        
+        start_time = time.time()
         cum_preds = model.generate_predictions(
             test_dataset,
-            max_length=128,
+            max_length=22,
             gen_args=gen_args,
             leave_tqdm=False,
             prepare_embedder=False,  # generate_predictions should NOT re-prep embedder
         )
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        
+        # Track timing info
+        avg_time_per_sample = elapsed_time / dataset_size if dataset_size > 0 else 0.0
+        timing_info[apcount] = {
+            'time': elapsed_time,
+            'dataset_size': dataset_size,
+            'avg_time_per_sample': avg_time_per_sample
+        }
+        total_time += elapsed_time
+        total_samples += dataset_size
+        
+        # Print timing info for this AP count
+        print(f"AP count {apcount}: {elapsed_time:.2f}s for {dataset_size} samples ({avg_time_per_sample:.4f}s/sample)")
+        
         cum_results = trace_check.evaluate_ltl(cum_preds, timeout=30, leave_tqdm=False)
         for l, size in zip(range(min_length, max_length+1), sizes):
             results, cum_results = cum_results[:size], cum_results[size:]
@@ -125,6 +148,9 @@ def eval2d(
             correct_matrix[apcount, l-1] += correct
             count_matrix[apcount, l-1] += len(results)
     
+    # Print total timing info
+    print(f"\nTotal time: {total_time:.2f}s for {total_samples} samples ({total_time/total_samples if total_samples > 0 else 0:.4f}s/sample)")
+    
     filedict |= {
         "correct_matrix": correct_matrix,
         "count_matrix": count_matrix,
@@ -133,6 +159,10 @@ def eval2d(
         "repeat_count": repeat_count,
         "eval_ds": eval_ds,
         "all_results": all_results,
+        "timing_info": timing_info,
+        "total_time": total_time,
+        "total_samples": total_samples,
+        "avg_time_per_sample": total_time / total_samples if total_samples > 0 else 0.0,
     }
     print("Correct:", filedict["correct"])
     print("Count:", filedict["count"])
@@ -164,7 +194,7 @@ def eval2d(
     # ax.add_patch(mpl.patches.Rectangle((-0.5, -0.5), 35, 5+1, fill=False, edgecolor='white', lw=2))
 
     fig.colorbar(plt.cm.ScalarMappable(cmap=redgreen), ax=ax)
-    plt.savefig(save_loc + ".png", bbox_inches="tight", dpi=192, pad_inches=0.02)
+    plt.savefig(os.path.join(model_path, "eval2da1.png"), bbox_inches="tight", dpi=192, pad_inches=0.02)
 
 
 if __name__ == '__main__':
@@ -174,7 +204,7 @@ if __name__ == '__main__':
     parser.add_argument('--repeat-count', type=int, default=10)
     parser.add_argument('--figsize', type=str, default="(6,3)")
     parser.add_argument('--seed', type=int, default=42, help='Seed for the random number generator')
-    parser.add_argument('--input', type=str, default="data/eval2d-10ap.pkl")
+    parser.add_argument('--input', type=str, default="data-prop/eval2d-10ap.pkl")
     parser.add_argument('--output', type=str, default="eval2da1.pkl")
     args = parser.parse_args()
 

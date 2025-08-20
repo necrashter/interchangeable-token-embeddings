@@ -18,15 +18,16 @@ import spot
 from autoregltl.ltl.enforcer import LTLSyntaxEnforcerConfig
 from autoregltl import dataset
 from autoregltl.ltl.trace_check import pool_iter
-from autoregltl.ltl.parser import ParseError, ltl_formula, ltl_trace
+from autoregltl.ltl.parser import ParseError, ltl_formula
 from autoregltl.utils import describe_statistics, tictoc_histogram, init_plot_font
 from autoregltl.eval import get_result_dir_name
+from autoregltl.sat import get_assignments, spot_to_pyaiger, is_model
 
 from itertools import permutations
 
 def generate_equivalent_expressions(expression, aps, max_perm=None):
     # Extract unique variables from the expression
-    unique_variables = sorted(set([ch for ch in expression if ch.islower()]))
+    unique_variables = sorted(set([ch for ch in expression.replace("xor", "") if ch.islower()]))
     # List to hold all equivalent expressions
     equivalent_expressions = []
     
@@ -70,7 +71,7 @@ class ResymbolizeDataset(dataset.SeqDataset):
         # Each group is a list of (prediction, trace, formula)
         out = []
         for group, (base_trace, base_formula) in zip(regrouped_predictions, self.base_dataset.data):
-            unique_variables = sorted(set([ch for ch in base_formula if ch.islower()]))
+            unique_variables = sorted(set([ch for ch in base_formula.replace("xor", "") if ch.islower()]))
             predictions = defaultdict(int)
             for item, perm in zip(group, permutations(self.aps, len(unique_variables))):
                 # Undo the permutation
@@ -97,23 +98,28 @@ def _eval_item(item):
     `item` is a list element from unresym output
     """
     eval_results = []
-    prev_automata = []
+    prev_assms = []
     invalids = []
-    formula_automaton = spot.formula(ltl_formula(item['formula'], 'network-polish').to_str('spot')).translate()
+    # formula_automaton = spot.formula(ltl_formula(, 'network-polish').to_str('spot')).translate()
+    formula_pyaiger = spot_to_pyaiger(item['formula'])
     for prediction in item['predictions'].keys():
         try:
-            trace_obj = ltl_trace(prediction, 'network-polish')
+            assm = get_assignments(prediction)
         except ParseError:
             invalids.append(prediction)
             continue
-        automaton = spot.parse_word(trace_obj.to_str('spot')).as_automaton()
-        for result, prev_automaton in zip(eval_results, prev_automata):
-            if automaton == prev_automaton:
+        for result, prev_assm in zip(eval_results, prev_assms):
+            if assm == prev_assm:
                 result['list'].append(prediction)
                 break
         else:
+            assignments_pyaiger = get_assignments(spot_to_pyaiger(prediction))
             # Not equivalent to anything
-            res = "semantically correct" if spot.contains(formula_automaton, automaton) else "incorrect"
+            try:
+                holds = is_model(formula_pyaiger, assignments_pyaiger)
+                res = "semantically correct" if holds else "incorrect"
+            except KeyError as e:
+                res = "incorrect"
             eval_results.append({
                 "result": res,
                 "list": [prediction],
@@ -168,12 +174,17 @@ def evaluate_model(model_path, args, load_model, get_gen_args):
         with open(os.path.join(result_dir, "predictions.json"), 'r') as f:
             unresymed = json.load(f)
     else:
-        predictions = model.generate_predictions(resym_dataset, args.max_length, gen_args)
-        it = iter(predictions)
-        regrouped = [[next(it) for _ in range(group_size)] for group_size in resym_dataset.group_sizes]
+        if os.path.exists(os.path.join(result_dir, "raw_predictions.json")):
+            print("Raw predictions already exist, skipping generation and loading from file")
+            with open(os.path.join(result_dir, "raw_predictions.json"), 'r') as f:
+                regrouped = json.load(f)
+        else:
+            predictions = model.generate_predictions(resym_dataset, args.max_length, gen_args)
+            it = iter(predictions)
+            regrouped = [[next(it) for _ in range(group_size)] for group_size in resym_dataset.group_sizes]
 
-        with open(os.path.join(result_dir, "raw_predictions.json"), 'w') as f:
-            json.dump(regrouped, f, indent=4)
+            with open(os.path.join(result_dir, "raw_predictions.json"), 'w') as f:
+                json.dump(regrouped, f, indent=4)
         
         unresymed = resym_dataset.unresym(regrouped)
         with open(os.path.join(result_dir, "predictions.json"), 'w') as f:

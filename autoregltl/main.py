@@ -4,7 +4,7 @@ import sys
 
 def add_dataset_arguments(parser):
     group = parser.add_argument_group("Dataset Arguments")
-    group.add_argument('--data-dir', default='data', help='directory of datasets')
+    group.add_argument('--data-dir', default='data-prop', help='directory of datasets')
     group.add_argument('--ds-name', default='ltl-35', help='Name of the dataset to use')
     group.add_argument('--max-trace-length', type=int, default=-1, help='Maximum length of a trace. Samples exceeding this will be filtered out')
     group.add_argument('--min-aps', type=int, help='Minimum number of APs in a formula')
@@ -64,8 +64,6 @@ def add_eval_arguments(parser):
 
     group.add_argument('--syntax-enforcing', '--se', action='store_true', default=False, help='Enable syntax enforcing')
     group.add_argument('--load-non-se', action='store_true', default=False, help='Load the results without syntax enforcing instead of starting from scratch')
-
-    group.add_argument("--equivalence", type=str, choices=['full', 'automata'], help="Equivalence checking method (full or automata), disabled by default")
 
     group.add_argument('--max-perm', type=int, help="Maximum number of permutations in resymbolize evaluation")
 

@@ -16,6 +16,8 @@ import spot
 from . parser import LTLTrace, LTLFormula, F_AND, F_IMLIES, F_NEXT, F_GLOBALLY, F_NOT, F_AP
 from . parser import ParseError, ltl_formula, ltl_trace
 
+from autoregltl.sat import get_assignments, spot_to_pyaiger, is_model
+
 
 def per_size_analysis(full_results, **kwargs):
     import matplotlib.pyplot as plt
@@ -117,56 +119,34 @@ def pool_iter(process_item, data, threads=None, timeout=30, tqdm_desc=None, leav
 
 
 def process_ltl_item(item, formula_format):
-    pred_str, trace_str, formula_str = item
+    pred_str, label_str, formula_str = item
     start_time = time.time()
     try:
-        pred_obj = ltl_trace(pred_str, format=formula_format)
+        pred = get_assignments(pred_str)
     except ParseError as e:
         return {"result": "invalid", "error": f"{e}", "time": time.time() - start_time}
-    formula_obj = ltl_formula(formula_str, format=formula_format)
-    if trace_str:
-        trace_obj = ltl_trace(trace_str, format=formula_format)
-        if pred_obj.equal_to(trace_obj, extended_eq=True):
+    if label_str:
+        label = get_assignments(label_str)
+        if pred == label:
             return {"result": "exact match", "time": time.time() - start_time}
-    # spot trace check
-    formula_automaton = spot.formula(formula_obj.to_str('spot')).translate()
-    pred_automaton = spot.parse_word(pred_obj.to_str('spot')).as_automaton()
+    # Semantic check
+    formula_pyaiger = spot_to_pyaiger(formula_str)
+    assignments_pyaiger = get_assignments(spot_to_pyaiger(pred_str))
     try:
-        spot_holds = spot.contains(formula_automaton, pred_automaton)
-        result = "semantically correct" if spot_holds else "incorrect"
-        return {"result": result, "time": time.time() - start_time}
+        holds = is_model(formula_pyaiger, assignments_pyaiger)
+    except KeyError as e:
+        return {"result": "incorrect", "error": f"{str(e)} is not in formula", "time": time.time() - start_time}
     except RuntimeError as e:
         return {
             "result": "runtime error",
             "error": repr(e),
             "time": time.time() - start_time,
         }
+    result = "semantically correct" if holds else "incorrect"
+    return {"result": result, "time": time.time() - start_time}
 
 
-def equivalence_item(item, formula_format, equivalence_method):
-    """
-    Pass 2 of trace checking. Performed only for semantically correct.
-    Checks if the generation is logically equivalent to (or has the same automata as) the target.
-    """
-    formula_str, target_str = item
-    try:
-        formula_obj = ltl_formula(formula_str, format=formula_format)
-        target_obj = ltl_formula(target_str, format=formula_format)
-    except ParseError as e:
-        return f"ParseError: {e}"
-    # spot trace check
-    try:
-        if equivalence_method == 'full':
-            return spot.are_equivalent(formula_obj.to_str('spot'), target_obj.to_str('spot'))
-        elif equivalence_method == 'automata':
-            return spot.formula(formula_obj.to_str('spot')).translate() == spot.formula(target_obj.to_str('spot')).translate()
-        else:
-            raise ValueError(f"Invalid equivalence method: {equivalence_method}")
-    except RuntimeError as e:
-        return "RuntimeError: " + repr(e)
-
-
-def evaluate_ltl(data, polish=True, threads=None, timeout=30, leave_tqdm=True, equivalence_method=None):
+def evaluate_ltl(data, polish=True, threads=None, timeout=30, leave_tqdm=True):
     """
     Args:
         data: List of tuples (formula, trace, target trace)
@@ -197,28 +177,6 @@ def evaluate_ltl(data, polish=True, threads=None, timeout=30, leave_tqdm=True, e
             result.update({"prediction": a, "trace": b, "formula": c})
             results.append(result)
 
-    if equivalence_method is not None:
-        if equivalence_method not in ['full', 'automata']:
-            print(f"[ERROR] Invalid equivalence method: '{equivalence_method}', skipping second pass")
-            return results
-        pass2_items = []
-        pass2_indices = []
-        for result in results:
-            if result['result'] == 'semantically correct':
-                pass2_items.append((a, c))
-                pass2_indices.append(len(results) - 1)
-        process_item = partial(equivalence_item, formula_format=formula_format, equivalence_method=equivalence_method)
-        with pool_iter(process_item, pass2_items, threads, timeout, tqdm_desc="Equivalence", leave_tqdm=leave_tqdm) as iterator:
-            for i in pass2_indices:
-                try:
-                    result = next(iterator)
-                except Exception as e:
-                    results[i]["equivalence_error"] = repr(e)
-                if isinstance(result, str):
-                    results[i]["equivalence_error"] = result
-                elif result:
-                    results[i]["result"] = "equivalent"
-
     return results
 
 
@@ -232,104 +190,3 @@ def analyze_results(results):
     for result in results:
         output[result["result"]][get_size(result)] += 1
     return output
-
-
-def ltl_distinctiveness_item(pair, formula_format):
-    formula, trace = pair
-    start_time = time.time()
-    formula_obj = ltl_formula(formula, format=formula_format)
-    trace_obj = ltl_trace(trace, format=formula_format)
-    # spot trace check
-    formula_spot = spot.formula(formula_obj.to_str('spot'))
-    trace_spot = spot.parse_word(trace_obj.to_str('spot'))
-    formula_automaton = formula_spot.translate()
-    trace_automaton = trace_spot.as_automaton()
-    output = spot.contains(formula_automaton, trace_automaton)
-    return output, time.time() - start_time
-
-
-def evaluate_ltl_distinctiveness(evaluations, polish=True, threads=None, timeout=30, leave_tqdm=True):
-    """
-    Args:
-        evaluations: output of evaluate_ltl
-    
-    Adds "distinctiveness" field to each evaluation. Returns a list of distinctiveness values.
-    """
-    valid_formulas = [i for i, item in enumerate(evaluations) if item["result"] in ("exact match", "equivalent", "semantically correct")]
-    # (formula, trace)
-    pairs_idx = [(i, j) for i in valid_formulas for j in range(len(evaluations)) if i != j]
-    pairs = [(evaluations[i]["formula"], evaluations[j]["trace"]) for i, j in pairs_idx]
-
-    formula_format = 'network-' + ('polish' if polish else 'infix')
-    process_item = partial(ltl_distinctiveness_item, formula_format=formula_format)
-
-    counts = [0] * len(evaluations)
-    timeouts = []
-    errors = []
-    eval_times = []
-
-    with pool_iter(process_item, pairs, threads, timeout, tqdm_desc="Distinctiveness", leave_tqdm=leave_tqdm) as iterator:
-        for pair in pairs_idx:
-            try:
-                result, time = next(iterator)
-                eval_times.append(time)
-                if result:
-                    counts[pair[0]] += 1
-            except TimeoutError:
-                timeouts.append(pair)
-                eval_times.append(timeout)
-            except Exception as e:
-                errors.append((*pair, repr(e)))
-
-    distinctiveness_values = []
-    other_count = len(evaluations) - 1
-    for count, evaluation in zip(counts, evaluations):
-        if evaluation["result"] in ("exact match", "equivalent", "semantically correct"):
-            distinctiveness = 1 - (count / other_count)
-            evaluation["distinctiveness"] = distinctiveness
-            distinctiveness_values.append(distinctiveness)
-    
-    return distinctiveness_values, timeouts, errors, eval_times
-
-
-def evaluate_ltl_target_distinctiveness(evaluations, polish=True, threads=None, timeout=30, leave_tqdm=True):
-    """
-    Same as evaluate_ltl_distinctiveness but operates on targets.
-    Args:
-        evaluations: output of evaluate_ltl
-    
-    Adds "distinctiveness" field to each evaluation. Returns a list of distinctiveness values.
-    """
-    # (formula, trace)
-    pairs_idx = [(i, j) for i in range(len(evaluations)) for j in range(len(evaluations)) if i != j]
-    pairs = [(evaluations[i]["target"], evaluations[j]["trace"]) for i, j in pairs_idx]
-
-    formula_format = 'network-' + ('polish' if polish else 'infix')
-    process_item = partial(ltl_distinctiveness_item, formula_format=formula_format)
-
-    counts = [0] * len(evaluations)
-    timeouts = []
-    errors = []
-    eval_times = []
-
-    with pool_iter(process_item, pairs, threads, timeout, tqdm_desc="Distinctiveness", leave_tqdm=leave_tqdm) as iterator:
-        for pair in pairs_idx:
-            try:
-                result, time = next(iterator)
-                eval_times.append(time)
-                if result:
-                    counts[pair[0]] += 1
-            except TimeoutError:
-                timeouts.append(pair)
-                eval_times.append(timeout)
-            except Exception as e:
-                errors.append((*pair, repr(e)))
-
-    distinctiveness_values = []
-    other_count = len(evaluations) - 1
-    for count, evaluation in zip(counts, evaluations):
-        distinctiveness = 1 - (count / other_count)
-        evaluation["distinctiveness"] = distinctiveness
-        distinctiveness_values.append(distinctiveness)
-    
-    return distinctiveness_values, timeouts, errors, eval_times

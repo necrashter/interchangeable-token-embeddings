@@ -8,6 +8,7 @@ from tqdm.auto import tqdm
 
 import spot
 from autoregltl.ltl.parser import ParseError, ltl_formula, ltl_trace
+from autoregltl.sat import spot_to_pyaiger, pyaiger_to_spot, generate_model
 
 import math
 from functools import reduce, partial
@@ -74,7 +75,7 @@ def abbrev_count(count):
     return '{:g}{}'.format(count / 10**(k_exponent*3), suffixes[k_exponent])
 
 
-def dataset_name(num_aps, tree_size, num_formulas, polish=True, simplify=False, name_prefix=None, **kwargs):
+def dataset_name(num_aps, tree_size, num_formulas, polish=True, name_prefix=None, **kwargs):
     folder = name_prefix + '-' if name_prefix is not None else ''
 
     if isinstance(tree_size, int):
@@ -86,28 +87,11 @@ def dataset_name(num_aps, tree_size, num_formulas, polish=True, simplify=False, 
     folder += '-'.join(folder_substrs)
     if polish:
         folder += '-lbt'
-    if simplify:
-        folder += '-simpl'
     return folder
 
 
-def spot_get_trace(formula_str, simplify):
-    start_time = time.time()
-    spot_formula = spot.formula(formula_str)
-    automaton = spot_formula.translate()
-    automaton.merge_edges()
-    acc_run = automaton.accepting_run()
-    if acc_run is None:
-        return False, None, time.time() - start_time
-    else:
-        trace = spot.twa_word(acc_run)
-        if simplify:
-            trace.simplify()
-        return True, str(trace), time.time() - start_time
 
-
-
-def generate_samples(num_aps, num_formulas, tree_size, seed, polish, simplify, trace_generator, timeout, max_time, **kwargs):
+def generate_samples(num_aps, num_formulas, tree_size, seed, polish, trace_generator, timeout, max_time, **kwargs):
     if num_aps > 26:
         raise ValueError("Cannot generate more than 26 APs")
     aps = list(map(chr, range(97, 97 + num_aps)))
@@ -115,7 +99,8 @@ def generate_samples(num_aps, num_formulas, tree_size, seed, polish, simplify, t
     if isinstance(tree_size, int):
         tree_size = (1, tree_size)
     formula_generator = spot.randltl(aps, seed=seed, tree_size=tree_size,
-                                     ltl_priorities='false=1,true=1,not=1,F=0,G=0,X=1,equiv=0,implies=0,xor=0,R=0,U=1,W=0,M=0,and=1,or=0', simplify=0)
+                                     ltl_priorities='false=1,true=1,not=1,F=0,G=0,X=0,equiv=0.5,implies=0,xor=0.5,R=0,U=0,W=0,M=0,and=1,or=1',
+                                     simplify=0)
 
     tictoc = TicToc()
     max_time = max_time if max_time is not None else float('inf')
@@ -129,8 +114,11 @@ def generate_samples(num_aps, num_formulas, tree_size, seed, polish, simplify, t
     unsat_samples = defaultdict(set)
     timeout_samples = defaultdict(set)
     total_samples = 0
-    cpus = len(os.sched_getaffinity(0))
+    cpus = len(os.sched_getaffinity(0)) if kwargs['cpus'] == 0 else kwargs['cpus']
     print(f'Using {cpus} CPUs')
+    if cpus < kwargs['min_cpus']:
+        print(f"Not enough CPUs (<{kwargs['min_cpus']}), exiting...")
+        sys.exit(1)
     qsize = 0
     maxqsize = 1000
     exhaustive = False
@@ -139,12 +127,12 @@ def generate_samples(num_aps, num_formulas, tree_size, seed, polish, simplify, t
         tqdm(total=num_formulas, desc="Trace") as pbar, 
         ProcessPool(cpus) as pool,
     ):
-        def callback(future, formula_str):
+        def callback(future, formula_str, formula_size):
             nonlocal pbar, discovered, samples, unsat_samples, timeout_samples, total_samples, qsize, maxqsize
             formula_aps = [i for i in aps if i in formula_str]
-            key = (len(formula_aps), len(formula_str))
+            key = (len(formula_aps), formula_size)
             try:
-                is_sat, trace_str, elapsed = future.result()  # blocks until results are ready
+                label_str, elapsed = future.result()  # blocks until results are ready
             except TimeoutError as error:
                 timeout_samples[key].add(formula_str)
                 return
@@ -155,17 +143,13 @@ def generate_samples(num_aps, num_formulas, tree_size, seed, polish, simplify, t
             finally:
                 qsize -= 1
             tictoc.add('trace generation', elapsed)
-            if not is_sat:
+            if label_str is None:
                 unsat_samples[key].add(formula_str)
-                return
-            # is_sat
-            if '0' in trace_str:
-                print('Bug in spot! (trace containing 0):\nFormula: {}\nTrace: {}\n'.format(formula_str, trace_str))
                 return
             if total_samples >= num_formulas:
                 return
-            trace_str = ltl_trace(trace_str, 'spot').to_str('network-' + ('polish' if polish else 'infix'))
-            samples[key].add((formula_str, trace_str, elapsed))
+            label_str = ''.join(pyaiger_to_spot(label_str.split(' ')))
+            samples[key].add((formula_str, label_str, elapsed))
             total_samples += 1
             pbar.update(1)
         try:
@@ -195,12 +179,12 @@ def generate_samples(num_aps, num_formulas, tree_size, seed, polish, simplify, t
 
                 formula_obj = ltl_formula(formula_str, 'spot')
                 formula_size = formula_obj.size()
-                # add some spaces and parenthesis to be safe for aalta
-                formula_spaced = formula_obj.to_str('spot', spacing='all ops', full_parens=True)
                 formula_str = formula_obj.to_str('network-' + ('polish' if polish else 'infix'))
-                assert formula_size == len(formula_str)
-                future = pool.schedule(spot_get_trace, args=(formula_spaced, simplify), timeout=timeout)
-                future.add_done_callback(partial(callback, formula_str=formula_str))
+                polist_pyaiger = spot_to_pyaiger(
+                    formula_obj.to_str('network-polish', spacing='all ops').split(' ')
+                )
+                future = pool.schedule(generate_model, args=(polist_pyaiger, None), timeout=timeout)
+                future.add_done_callback(partial(callback, formula_str=formula_str, formula_size=formula_size))
                 pbar1.update(1)
                 qsize += 1
                 while qsize >= maxqsize:
@@ -241,13 +225,14 @@ def run():
                                  default=True, help='write formulas and traces in polish notation; default')
     infix_or_polish.add_argument('--infix', dest='polish', action='store_false',
                                  default=True, help='write formulas and traces in infix notation')
-    parser.add_argument('--simplify', action='store_true')
     parser.add_argument('--trace-generator', type=str, choices=[
                         'spot', 'aalta'], default='spot', help='which tool to get a trace (or unsat) from; default spot')
     parser.add_argument('--timeout', type=float, default=10,
                         help='time in seconds to wait for the trace generator to return, if expired kill and continue with next formula')
     parser.add_argument('--name-prefix', help="Name to prefix the dataset name with")
     parser.add_argument('--max-time', type=float, default=3*60*60)
+    parser.add_argument('--cpus', type=int, default=0, help="Number of worker threads")
+    parser.add_argument('--min-cpus', type=int, default=0, help="Exit if available CPUs are smaller than this")
     args = parser.parse_args()
 
     tree_size = args.tree_size.split('-')

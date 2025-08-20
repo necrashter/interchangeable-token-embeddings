@@ -78,11 +78,16 @@ class EncDecVocab():
     def create_ltl_vocab(
         aps,
         consts: list = ['0', '1'],
-        trace_ops: list = ['&', '|', '!'],
-        ltl_ops: list = ['U', 'X', '!', '&', '|'],
+        trace_ops: list = [],
+        # ltl_ops: list = ['!', '&', '|', '<->', 'xor'],
+        # Equiv   | <-> | =
+        # XOR     | xor | ^
+        ltl_ops: list = ['!', '&', '|', '=', '^'],
     ):
+        raise NotImplementedError()
+        # start setting: should it be reversed?
         inp = CharVocab(aps=aps, consts=consts, ops=ltl_ops, start=True)
-        out = CharVocab(aps=aps, consts=consts, ops=trace_ops, specials=[';', '{', '}'], start=False)
+        out = CharVocab(aps=aps, consts=consts, ops=trace_ops, start=False)
         return EncDecVocab(inp, out)
     
     def are_inputs_compatible(self, other):
@@ -106,8 +111,8 @@ class MergedLTLVocab():
     """
     aps: list
     consts: list = field(default_factory=lambda: ['0', '1'])
-    trace_ops: list = field(default_factory=lambda: ['&', '|', '!'])
-    ltl_ops: list = field(default_factory=lambda: ['U', 'X', '!', '&', '|'])
+    trace_ops: list = field(default_factory=lambda: [])
+    ltl_ops: list = field(default_factory=lambda: ['!', '&', '|', '=', '^'])
     merge_tokens: Optional[str] = None
     # Each ap_i in the input will be converted to #other_tokens + i
     # aps field will be ignored
@@ -132,15 +137,15 @@ class MergedLTLVocab():
 
         if self.merge_tokens is None:
             # LTL first because it's the output
-            self.trace_tokens = self._add_tokens(aps + self.consts + self.trace_ops + [';', '{', '}'])
+            self.trace_tokens = self._add_tokens(aps + self.consts + self.trace_ops)
             self.ltl_tokens = self._add_tokens(aps + self.consts + self.ltl_ops)
         elif self.merge_tokens == "aps":
             common = self._add_tokens(aps + self.consts)
-            self.trace_tokens = common | self._add_tokens(self.trace_ops + [';', '{', '}'])
+            self.trace_tokens = common | self._add_tokens(self.trace_ops)
             self.ltl_tokens = common | self._add_tokens(self.ltl_ops)
         elif self.merge_tokens == "all":
             ltl_ops = self.ltl_ops
-            trace_ops = self.trace_ops + [';', '{', '}']
+            trace_ops = self.trace_ops
             # Determine common and unique ops
             common_ops = [x for x in ltl_ops if x in trace_ops]
             ltl_ops = [x for x in ltl_ops if x not in common_ops]
@@ -157,6 +162,10 @@ class MergedLTLVocab():
             aps = self._add_tokens([chr(i) for i in range(ord('a'), ord('z')+1)])
             self.ltl_tokens |= aps
             self.trace_tokens |= aps
+        
+        # Decode fix for implies and xor operators
+        self.token_list[self.ltl_tokens['=']] = "<->"
+        self.token_list[self.ltl_tokens['^']] = "xor"
     
     def _add_tokens(self, tokens):
         start_id = len(self.token_list)
@@ -177,11 +186,13 @@ class MergedLTLVocab():
         """
         Encode trace and LTL formula with EOS token.
         """
+        raise NotImplementedError()
         trace = [self.trace_tokens[c] for c in trace]
         ltl = [self.ltl_tokens[c] for c in ltl]
         return trace + ltl + [self.eos_id]
     
     def _encode(self, text, tokens, eos):
+        text = text.replace("<->", '=').replace("xor", "^")
         out = [tokens[c] for c in text]
         if eos:
             out.append(self.eos_id)

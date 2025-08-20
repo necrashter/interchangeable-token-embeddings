@@ -65,7 +65,7 @@ def evaluate_model(model_path, model, args, get_gen_args):
             results = json.load(f)
     else:
         predictions = model.generate_predictions(test_dataset, args.max_length, gen_args)
-        results = trace_check.evaluate_ltl(predictions, threads=args.eval_threads, timeout=args.eval_timeout, equivalence_method=args.equivalence)
+        results = trace_check.evaluate_ltl(predictions, threads=args.eval_threads, timeout=args.eval_timeout)
         with open(os.path.join(result_dir, "evaluation.json"), 'w') as f:
             json.dump(results, f, indent=4)
         analyze_ltl_results(results, args, result_dir)
@@ -85,7 +85,7 @@ def evaluate_model(model_path, model, args, get_gen_args):
             os.makedirs(result_dir, exist_ok=True)
             new_dataset = dataset.SeqDataset(new_samples)
             new_predictions = model.generate_predictions(new_dataset, args.max_length, gen_args)
-            new_results = trace_check.evaluate_ltl(new_predictions, threads=args.eval_threads, timeout=args.eval_timeout, equivalence_method=args.equivalence)
+            new_results = trace_check.evaluate_ltl(new_predictions, threads=args.eval_threads, timeout=args.eval_timeout)
             for i, result in zip(new_samples_i, new_results):
                 results[i] = result
 

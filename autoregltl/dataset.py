@@ -16,8 +16,8 @@ from autoregltl.ltl.parser import ParseError, ltl_formula, ltl_trace
 
 def download_dataset(dataset_name, split, dataset_dir):
     url_lookup = {
-        'na-5-ts-35-nf-1m-lbt-sat': 'https://storage.googleapis.com/deepltl_data/data/ltl_traces/na-5-ts-35-nf-1m-lbt-sat/',
-        'na-5-ts-35-50-nf-20k-lbt-sat': 'https://storage.googleapis.com/deepltl_data/data/ltl_traces/na-5-ts-35-50-nf-20k-lbt-sat/',
+        'na-5-ts-35-nf-1m-lbt-sat': 'https://storage.googleapis.com/deepltl_data/data/sat/na-5-ts-35-nf-1m-lbt-sat/',
+        'na-5-ts-35-50-nf-20k-lbt-sat': 'https://storage.googleapis.com/deepltl_data/data/sat/na-5-ts-35-50-nf-20k-lbt-sat/',
     }
 
     # Check if split already exists
@@ -57,10 +57,16 @@ def read_pairs(
         min_aps = min_aps if min_aps is not None else 0
         max_aps = max_aps if max_aps is not None else float('inf')
         def ap_filter(formula):
-            aps = len({f for f in formula if f.islower()})
+            aps = len({f for f in formula.replace("xor", "") if f.islower()})
             return aps < min_aps or aps > max_aps
     else:
         ap_filter = lambda x: False
+
+    if max_formula_length >= 0:
+        def formula_filter(formula):
+            return len(formula.replace("<->", "=").replace("xor", "^")) > max_formula_length
+    else:
+        formula_filter = lambda x: False
 
     filtered = 0
     pairs = []
@@ -70,7 +76,7 @@ def read_pairs(
                 break
             formula_line = formula_line.strip()
             trace_line = next(file).strip()  # get second line
-            if (max_formula_length >= 0 and len(formula_line) > max_formula_length) or \
+            if formula_filter(formula_line) or \
                (max_trace_length >= 0 and len(trace_line) > max_trace_length) or \
                ap_filter(formula_line):
                 filtered += 1

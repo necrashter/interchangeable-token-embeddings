@@ -7,6 +7,7 @@ from tqdm.auto import tqdm
 
 import spot
 from autoregltl.ltl.parser import ParseError, ltl_formula, ltl_trace
+from autoregltl.sat import spot_to_pyaiger, pyaiger_to_spot, generate_model
 
 import math
 import pickle
@@ -74,7 +75,7 @@ def abbrev_count(count):
     return '{:g}{}'.format(count / 10**(k_exponent*3), suffixes[k_exponent])
 
 
-def dataset_name(num_aps, tree_size, num_formulas, polish=True, simplify=False, name_prefix=None, **kwargs):
+def dataset_name(num_aps, tree_size, num_formulas, polish=True, name_prefix=None, **kwargs):
     folder = name_prefix + '-' if name_prefix is not None else ''
 
     if isinstance(tree_size, int):
@@ -86,25 +87,7 @@ def dataset_name(num_aps, tree_size, num_formulas, polish=True, simplify=False, 
     folder += '-'.join(folder_substrs)
     if polish:
         folder += '-lbt'
-    if simplify:
-        folder += '-simpl'
     return folder
-
-
-def spot_get_trace(formula_str, simplify):
-    start_time = time.time()
-    spot_formula = spot.formula(formula_str)
-    automaton = spot_formula.translate()
-    automaton.merge_edges()
-    acc_run = automaton.accepting_run()
-    if acc_run is None:
-        return False, None, time.time() - start_time
-    else:
-        trace = spot.twa_word(acc_run)
-        if simplify:
-            trace.simplify()
-        return True, str(trace), time.time() - start_time
-
 
 
 class DistributionGate():
@@ -168,7 +151,7 @@ class DistributionGate():
         return all([self.fulls[eb] for eb in self.enforced_bins])
 
 
-def generate_samples(num_aps, num_formulas, tree_size, seed, polish, simplify, train_frac, val_frac, trace_generator, timeout, alpha, directory, **kwargs):
+def generate_samples(num_aps, num_formulas, tree_size, seed, polish, train_frac, val_frac, trace_generator, timeout, alpha, directory, **kwargs):
     if num_aps > 26:
         raise ValueError("Cannot generate more than 26 APs")
     aps = list(map(chr, range(97, 97 + num_aps)))
@@ -176,7 +159,8 @@ def generate_samples(num_aps, num_formulas, tree_size, seed, polish, simplify, t
     if isinstance(tree_size, int):
         tree_size = (1, tree_size)
     formula_generator = spot.randltl(aps, seed=seed, tree_size=tree_size,
-                                     ltl_priorities='false=1,true=1,not=1,F=0,G=0,X=1,equiv=0,implies=0,xor=0,R=0,U=1,W=0,M=0,and=1,or=0', simplify=0)
+                                     ltl_priorities='false=1,true=1,not=1,F=0,G=0,X=0,equiv=0.5,implies=0,xor=0.5,R=0,U=0,W=0,M=0,and=1,or=1',
+                                     simplify=0)
 
     start_time = time.time()
     tictoc = TicToc()
@@ -191,6 +175,9 @@ def generate_samples(num_aps, num_formulas, tree_size, seed, polish, simplify, t
     total_samples = 0
     cpus = len(os.sched_getaffinity(0))
     print(f'Using {cpus} CPUs')
+    if cpus < kwargs['min_cpus']:
+        print(f"Not enough CPUs (<{kwargs['min_cpus']}), exiting...")
+        sys.exit(1)
     qsize = 0
     maxqsize = 1000
     with (
@@ -198,10 +185,10 @@ def generate_samples(num_aps, num_formulas, tree_size, seed, polish, simplify, t
         tqdm(total=num_formulas, desc="Trace") as pbar, 
         ProcessPool(cpus) as pool,
     ):
-        def callback(future, formula_str):
+        def callback(future, formula_str, formula_size):
             nonlocal pbar, samples, unsat_samples, timeout_samples, total_samples, qsize, maxqsize
             try:
-                is_sat, trace_str, elapsed = future.result()  # blocks until results are ready
+                label_str, elapsed = future.result()  # blocks until results are ready
             except TimeoutError as error:
                 timeout_samples.append(formula_str)
                 return
@@ -212,19 +199,15 @@ def generate_samples(num_aps, num_formulas, tree_size, seed, polish, simplify, t
             finally:
                 qsize -= 1
             tictoc.add('trace generation', elapsed)
-            if not is_sat:
+            if label_str is None:
                 unsat_samples.append(formula_str)
-                return
-            # is_sat
-            if '0' in trace_str:
-                print('Bug in spot! (trace containing 0):\nFormula: {}\nTrace: {}\n'.format(formula_str, trace_str))
                 return
             if total_samples >= num_formulas or dist_gate.full():
                 return
-            trace_str = ltl_trace(trace_str, 'spot').to_str('network-' + ('polish' if polish else 'infix'))
-            samples.append((formula_str, trace_str, elapsed))
+            label_str = ''.join(pyaiger_to_spot(label_str.split(' ')))
+            samples.append((formula_str, label_str, elapsed))
             total_samples += 1
-            dist_gate.update(len(formula_str))
+            dist_gate.update(formula_size)
             pbar.update(1)
         try:
             while total_samples < num_formulas and not dist_gate.full():
@@ -242,12 +225,12 @@ def generate_samples(num_aps, num_formulas, tree_size, seed, polish, simplify, t
                 formula_size = formula_obj.size()
                 if not dist_gate.gate(formula_size):  # formula doesn't fit distribution
                     continue
-                # add some spaces and parenthesis to be safe for aalta
-                formula_spaced = formula_obj.to_str('spot', spacing='all ops', full_parens=True)
                 formula_str = formula_obj.to_str('network-' + ('polish' if polish else 'infix'))
-                assert formula_size == len(formula_str)
-                future = pool.schedule(spot_get_trace, args=(formula_spaced, simplify), timeout=timeout)
-                future.add_done_callback(partial(callback, formula_str=formula_str))
+                polist_pyaiger = spot_to_pyaiger(
+                    formula_obj.to_str('network-polish', spacing='all ops').split(' ')
+                )
+                future = pool.schedule(generate_model, args=(polist_pyaiger, None), timeout=timeout)
+                future.add_done_callback(partial(callback, formula_str=formula_str, formula_size=formula_size))
                 pbar1.update(1)
                 qsize += 1
                 while qsize >= maxqsize:
@@ -286,19 +269,18 @@ def generate_samples(num_aps, num_formulas, tree_size, seed, polish, simplify, t
 
 def run():
     parser = argparse.ArgumentParser(
-        description='Randomly generates LTL formulas with a corresponding trace.')
+        description='Randomly generates Prop formulas with a satisfying variable assignment.')
     parser.add_argument('--num-aps', '-na', type=int, default=5)
     parser.add_argument('--num-formulas', '-nf', type=int, default=1000)
     parser.add_argument('--tree-size', '-ts', type=str, default='15', metavar='MAX_TREE_SIZE',
                         help="Maximum tree size of generated formulas. Range can be specified as 'MIN-MAX'; default minimum is 1")
-    parser.add_argument('--output-dir', '-od', type=str, default="mygen")
+    parser.add_argument('--output-dir', '-od', type=str, default="mygen-prop")
     parser.add_argument('--seed', type=int, default=42)
     infix_or_polish = parser.add_mutually_exclusive_group()
     infix_or_polish.add_argument('--polish', dest='polish', action='store_true',
                                  default=True, help='write formulas and traces in polish notation; default')
     infix_or_polish.add_argument('--infix', dest='polish', action='store_false',
                                  default=True, help='write formulas and traces in infix notation')
-    parser.add_argument('--simplify', action='store_true')
     parser.add_argument('--train-frac', type=float, default=0.8)
     parser.add_argument('--val-frac', type=float, default=0.1)
     parser.add_argument('--trace-generator', type=str, choices=[
@@ -308,6 +290,7 @@ def run():
     parser.add_argument('--alpha', type=float, default=0.0,
                         help='Distribution parameter')
     parser.add_argument('--name-prefix', help="Name to prefix the dataset name with")
+    parser.add_argument('--min-cpus', type=int, default=0, help="Exit if available CPUs are smaller than this")
     args = parser.parse_args()
 
     tree_size = args.tree_size.split('-')
