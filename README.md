@@ -20,7 +20,11 @@ Switch to `prop-task` or `copy-task` branches for the propositional logic and co
 Note that the dataset names remain consistent between LTL and propositional logic tasks, e.g., the default prop. logic dataset is called `ltl-35`, its 10 AP variant is `ltl-35-10ap`, etc.
 To differentiate the datasets, in LTL, the datasets under `data` folder is used, whereas in prop. logic, `data-prop` folder is used.
 
-The datasets and the trained models will be uploaded later. If you need them in the meantime, please feel free to contact the first author.
+## Datasets & Models
+
+You can get the datasets and the trained models from HuggingFace:
+* [Datasets](https://huggingface.co/datasets/necrashter/interchangeable-token-embeddings-datasets)
+* [Models](https://huggingface.co/necrashter/interchangeable-token-embeddings)
 
 ## Usage
 
@@ -81,3 +85,4 @@ python -m autoregltl.eval2da "$MODEL_PATH"
 ### Utils
 
 There are various scripts in the `utils` and `notebooks` folders for creating perturbed datasets, figures, etc.
+
